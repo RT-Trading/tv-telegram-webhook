@@ -4,33 +4,37 @@ import os
 
 app = Flask(__name__)
 
-# Umgebungsvariablen für Telegram
+# Umgebungsvariablen
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-# Funktion zur Berechnung der Take-Profit-Ziele
-def calc_tp(entry, sl, side):
-    risk = abs(entry - sl)
+# SL automatisch berechnen + TP-Ziele
+def calc_tp_auto(entry, side):
+    risk_percent = 0.01  # 1% Risiko
     if side.lower() == 'long':
-        return entry + risk, entry + 3 * risk, entry + 5 * risk
+        sl = entry * (1 - risk_percent)
+        risk = entry - sl
+        return sl, entry + risk, entry + 3*risk, entry + 5*risk
     else:
-        return entry - risk, entry - 3 * risk, entry - 5 * risk
+        sl = entry * (1 + risk_percent)
+        risk = sl - entry
+        return sl, entry - risk, entry - 3*risk, entry - 5*risk
 
-# Webhook-Route ohne Tokenprüfung
+# Webhook-Route
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
 
+    # 🔢 Konvertierung
     try:
-        entry = float(data['entry']) if isinstance(data['entry'], str) else data['entry']
-        sl = float(data['sl']) if isinstance(data['sl'], str) else data['sl']
+        entry = float(data['entry'])
     except (KeyError, ValueError, TypeError):
-        return 'Invalid entry or sl', 400
+        return 'Invalid entry', 400
 
     side = data.get('side', '').lower()
     symbol = data.get('symbol', 'Unknown')
 
-    tp1, tp2, tp3 = calc_tp(entry, sl, side)
+    sl, tp1, tp2, tp3 = calc_tp_auto(entry, side)
 
     msg = f"""📈 *Signal*: {symbol}
 *Richtung*: {side.upper()}
@@ -43,7 +47,7 @@ def webhook():
     send_to_telegram(msg)
     return 'OK', 200
 
-# Nachricht an Telegram senden
+# Telegram senden mit Debug-Ausgabe
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
@@ -52,8 +56,9 @@ def send_to_telegram(text):
         # 'parse_mode': 'Markdown'  # optional aktivieren
     }
     response = requests.post(url, data=data)
-    print("📬 Telegram Antwort:", response.status_code, response.text)
+    print("🔍 Telegram Response:", response.status_code, response.text)
 
-# Render erwartet diesen Block
+# Render erwartet diese Zeile
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
+
