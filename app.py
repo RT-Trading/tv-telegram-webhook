@@ -4,24 +4,23 @@ import os
 
 app = Flask(__name__)
 
-# Umgebungsvariablen
+# Umgebungsvariablen für Telegram
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-# Funktion zur Take-Profit-Berechnung
+# Funktion zur Berechnung der Take-Profit-Ziele
 def calc_tp(entry, sl, side):
     risk = abs(entry - sl)
     if side.lower() == 'long':
-        return entry + risk, entry + 3*risk, entry + 5*risk
+        return entry + risk, entry + 3 * risk, entry + 5 * risk
     else:
-        return entry - risk, entry - 3*risk, entry - 5*risk
+        return entry - risk, entry - 3 * risk, entry - 5 * risk
 
-# Webhook-Route
+# Webhook-Route ohne Tokenprüfung
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
 
-    # 🔢 Flexible Konvertierung
     try:
         entry = float(data['entry']) if isinstance(data['entry'], str) else data['entry']
         sl = float(data['sl']) if isinstance(data['sl'], str) else data['sl']
@@ -44,17 +43,17 @@ def webhook():
     send_to_telegram(msg)
     return 'OK', 200
 
-# Telegram senden – Testversion mit Debug-Ausgabe
+# Nachricht an Telegram senden
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
         'chat_id': TELEGRAM_CHAT_ID,
         'text': f"Test-Nachricht\n{text}",
-        # 'parse_mode': 'Markdown'  # für Fehlersuche deaktiviert
+        # 'parse_mode': 'Markdown'  # optional aktivieren
     }
     response = requests.post(url, data=data)
-    print("🔍 Telegram Response:", response.status_code, response.text)
+    print("📬 Telegram Antwort:", response.status_code, response.text)
 
-# Render erwartet diese Zeile
+# Render erwartet diesen Block
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
