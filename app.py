@@ -11,15 +11,22 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 # SL automatisch berechnen
 def calc_sl(entry, side):
     risk_pct = 0.01  # z. B. 1 % Risiko
-    return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
+    if side == 'long':
+        return entry * (1 - risk_pct)
+    elif side == 'short':
+        return entry * (1 + risk_pct)
+    else:
+        return entry  # fallback, falls unknown
 
 # Take-Profit-Ziele berechnen
 def calc_tp(entry, sl, side):
     risk = abs(entry - sl)
     if side == 'long':
         return entry + risk, entry + 3 * risk, entry + 5 * risk
-    else:
+    elif side == 'short':
         return entry - risk, entry - 3 * risk, entry - 5 * risk
+    else:
+        return entry, entry, entry  # fallback
 
 # Webhook
 @app.route('/webhook', methods=['POST'])
@@ -28,7 +35,7 @@ def webhook():
 
     try:
         entry = float(data['entry'])
-        side = data.get('side', '').lower()
+        side = str(data.get('side', '')).strip().lower()
         symbol = data.get('symbol', 'Unknown').upper()
     except (KeyError, ValueError, TypeError):
         return 'Invalid input', 400
@@ -36,23 +43,29 @@ def webhook():
     sl = calc_sl(entry, side)
     tp1, tp2, tp3 = calc_tp(entry, sl, side)
 
-    side_icon = '🟢 LONG' if side == 'long' else '🔴 SHORT'
+    # ICON je nach Richtung
+    if side == 'long':
+        direction_icon = "🟢 LONG"
+    elif side == 'short':
+        direction_icon = "🔴 SHORT"
+    else:
+        direction_icon = "⚪️ UNBEKANNT"
 
-    msg = f"""🔔 *{symbol}* 🔔  
-{side_icon}
+    # Nachricht formatieren
+    msg = f"""🔔  *{symbol}*  🔔
+{direction_icon}
 
-📍 *Entry*: {entry:.2f}  
-🛑 *SL*: {sl:.2f}
+📍 *Entry:* {entry:.2f}  
+🛑 *SL:* {sl:.2f}
 
-💶 *TP 1*: {tp1:.2f}  
-💶 *TP 2*: {tp2:.2f}  
-💶 *TP 3*: {tp3:.2f}
+💶 *TP 1:* {tp1:.2f}  
+💶 *TP 2:* {tp2:.2f}  
+💶 *TP 3:* {tp3:.2f}
 
 ⚠️ *Keine Finanzberatung!*  
-📌 *Achtet auf Money Management!*  
-❗️ *Sehr riskant – aufpassen!*  
-🔁 *Bei TP 1 auf Breakeven setzen oder eigenständig managen.*
-"""
+📌 Achtet auf *Money Management*!  
+❗️Sehr *riskant* – aufpassen!  
+🔁 *Bei TP 1 auf Breakeven setzen* oder eigenständig managen."""
 
     send_to_telegram(msg)
     return 'OK', 200
@@ -71,5 +84,6 @@ def send_to_telegram(text):
 # Render erwartet das
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
+
 
 
