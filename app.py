@@ -53,17 +53,30 @@ def webhook():
 
     try:
         entry = float(data['entry'])
-        side = data.get('side', '').lower()
-        symbol = data.get('symbol', 'Unknown').upper()
+        side = data.get('side', '').strip().lower()
+        symbol = data.get('symbol', 'Unknown').strip().upper()
     except (KeyError, ValueError, TypeError):
-        return 'Invalid input', 400
+        return '❌ Ungültige Eingabedaten – bitte Entry, Side (long/short) und Symbol übermitteln.', 400
 
+    # Validierung der Richtung
+    if side not in ['long', 'short']:
+        return '❌ Ungültiger Wert für "side" – erlaubt sind nur "long" oder "short".', 400
+
+    # SL und TPs berechnen
     sl = calc_sl(entry, side)
     tp1, tp2, tp3 = calc_tp(entry, sl, side)
+
+    # Nachricht formatieren
     msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
+    # Telegram senden
     send_to_telegram(msg)
-    return 'OK', 200
+
+    # Log zur Prüfung
+    print(f"✅ Webhook empfangen: {symbol} | {side.upper()} | Entry={entry}")
+    print(f"🔢 SL={sl:.2f}, TP1={tp1:.2f}, TP2={tp2:.2f}, TP3={tp3:.2f}")
+
+    return '✅ Signal erfolgreich verarbeitet', 200
 
 # Telegram senden
 def send_to_telegram(text):
