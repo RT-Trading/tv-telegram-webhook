@@ -7,7 +7,6 @@ app = Flask(__name__)
 # Umgebungsvariablen
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
-WEBHOOK_TOKEN = os.environ.get('WEBHOOK_TOKEN')  # Token für Sicherheitsprüfung
 
 # Funktion zur Take-Profit-Berechnung
 def calc_tp(entry, sl, side):
@@ -21,10 +20,6 @@ def calc_tp(entry, sl, side):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-
-    # 🔐 Sicherheitsprüfung
-    if data.get('token') != WEBHOOK_TOKEN:
-        return 'Unauthorized', 403
 
     # 🔢 Flexible Konvertierung
     try:
@@ -59,7 +54,6 @@ def send_to_telegram(text):
     }
     response = requests.post(url, data=data)
     print("🔍 Telegram Response:", response.status_code, response.text)
-
 
 # Render erwartet diese Zeile
 if __name__ == '__main__':
