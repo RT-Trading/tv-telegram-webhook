@@ -8,12 +8,11 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
-# SL automatisch berechnen
-def calc_sl(entry, side):
-    risk_pct = 0.01  # z. B. 1 % Risiko
+# SL automatisch berechnen (1 % Risiko)
+def calc_sl(entry, side, risk_pct=0.01):
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
 
-# Take-Profit-Ziele berechnen
+# TP-Ziele basierend auf CRV (Chance-Risiko-Verhältnis)
 def calc_tp(entry, sl, side):
     risk = abs(entry - sl)
     if side == 'long':
@@ -21,7 +20,7 @@ def calc_tp(entry, sl, side):
     else:
         return entry - risk, entry - 3 * risk, entry - 5 * risk
 
-# Telegram-Nachricht formatieren
+# Formatierte Telegram-Nachricht
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     if side == 'long':
         direction = '🟢 *LONG* 📈'
@@ -36,9 +35,9 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 📍 *Entry*: `{entry:.2f}`  
 🛑 *SL*: `{sl:.2f}`
 
-💶 *TP 1*: `{tp1:.2f}`  
-💶 *TP 2*: `{tp2:.2f}`  
-💶 *TP 3*: `{tp3:.2f}`
+💶 *TP 1 (1:1)*: `{tp1:.2f}`  
+💶 *TP 2 (1:3)*: `{tp2:.2f}`  
+💶 *TP 3 (1:5)*: `{tp3:.2f}`
 
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
@@ -46,7 +45,7 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 🔁 *Bei TP 1 auf Breakeven setzen* oder eigenständig managen.
 """
 
-# Webhook
+# Webhook-Endpunkt
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
@@ -54,31 +53,22 @@ def webhook():
     try:
         entry = float(data['entry'])
         side = data.get('side', '').strip().lower()
-        symbol = data.get('symbol', 'Unknown').strip().upper()
+        symbol = data.get('symbol', '').strip().upper()
+        if not symbol or side not in ['long', 'short']:
+            return '❌ Fehler: symbol oder side fehlt/ungültig', 400
     except (KeyError, ValueError, TypeError):
-        return '❌ Ungültige Eingabedaten – bitte Entry, Side (long/short) und Symbol übermitteln.', 400
+        return '❌ Ungültige Eingabedaten – entry, side, symbol erforderlich.', 400
 
-    # Validierung der Richtung
-    if side not in ['long', 'short']:
-        return '❌ Ungültiger Wert für "side" – erlaubt sind nur "long" oder "short".', 400
-
-    # SL und TPs berechnen
     sl = calc_sl(entry, side)
     tp1, tp2, tp3 = calc_tp(entry, sl, side)
-
-    # Nachricht formatieren
     msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
-    # Telegram senden
     send_to_telegram(msg)
 
-    # Log zur Prüfung
-    print(f"✅ Webhook empfangen: {symbol} | {side.upper()} | Entry={entry}")
-    print(f"🔢 SL={sl:.2f}, TP1={tp1:.2f}, TP2={tp2:.2f}, TP3={tp3:.2f}")
+    print(f"✅ Webhook: {symbol} | {side.upper()} | Entry={entry} | SL={sl:.2f}")
+    return '✅ Signal gesendet', 200
 
-    return '✅ Signal erfolgreich verarbeitet', 200
-
-# Telegram senden
+# Telegram-Nachricht senden
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
@@ -87,12 +77,8 @@ def send_to_telegram(text):
         'parse_mode': 'Markdown'
     }
     response = requests.post(url, data=data)
-    print("🔍 Telegram Response:", response.status_code, response.text)
+    print("📨 Telegram Antwort:", response.status_code, response.text)
 
-# Render erwartet das
+# App starten
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
-
-
-
-
