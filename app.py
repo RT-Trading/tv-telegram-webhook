@@ -3,8 +3,11 @@ import requests
 
 app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN = 'DEIN_TELEGRAM_BOT_TOKEN'
-TELEGRAM_CHAT_ID = 'DEINE_CHAT_ID'
+import os
+
+TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+
 
 def calc_tp(entry, sl, side):
     risk = abs(entry - sl)
