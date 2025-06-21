@@ -22,14 +22,19 @@ def calc_tp(entry, sl, side):
 def webhook():
     data = request.get_json()
 
-    # 🔒 Sicherheitsprüfung
+    # 🔐 Sicherheitsprüfung
     if data.get('token') != WEBHOOK_TOKEN:
         return 'Unauthorized', 403
 
-    entry = float(data['entry'])
-    sl = float(data['sl'])
-    side = data['side']
-    symbol = data['symbol']
+    # 🔢 Flexible Konvertierung
+    try:
+        entry = float(data['entry']) if isinstance(data['entry'], str) else data['entry']
+        sl = float(data['sl']) if isinstance(data['sl'], str) else data['sl']
+    except (KeyError, ValueError, TypeError):
+        return 'Invalid entry or sl', 400
+
+    side = data.get('side', '').lower()
+    symbol = data.get('symbol', 'Unknown')
 
     tp1, tp2, tp3 = calc_tp(entry, sl, side)
 
