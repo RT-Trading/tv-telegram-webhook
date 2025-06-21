@@ -21,6 +21,31 @@ def calc_tp(entry, sl, side):
     else:
         return entry - risk, entry - 3 * risk, entry - 5 * risk
 
+# Telegram-Nachricht formatieren
+def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
+    if side == 'long':
+        direction = '🟢 *LONG* 📈'
+    elif side == 'short':
+        direction = '🔴 *SHORT* 📉'
+    else:
+        direction = f'*{side.upper()}*'
+
+    return f"""🔔 *{symbol}* 🔔  
+{direction}
+
+📍 *Entry*: `{entry:.2f}`  
+🛑 *SL*: `{sl:.2f}`
+
+💶 *TP 1*: `{tp1:.2f}`  
+💶 *TP 2*: `{tp2:.2f}`  
+💶 *TP 3*: `{tp3:.2f}`
+
+⚠️ *Keine Finanzberatung!*  
+📌 Achtet auf *Money Management*!  
+❗️Sehr *riskant* – aufpassen!  
+🔁 *Bei TP 1 auf Breakeven setzen* oder eigenständig managen.
+"""
+
 # Webhook
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -35,14 +60,7 @@ def webhook():
 
     sl = calc_sl(entry, side)
     tp1, tp2, tp3 = calc_tp(entry, sl, side)
-
-    msg = f"""🔔  {symbol} {side.upper()}  🔔
-📈 > {entry:.2f}  
-🛑 > {sl:.2f} SL
-
-💶 > {tp1:.2f} TP 1  
-💶 > {tp2:.2f} TP 2  
-💶 > {tp3:.2f} TP 3"""
+    msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
     send_to_telegram(msg)
     return 'OK', 200
@@ -52,7 +70,8 @@ def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
         'chat_id': TELEGRAM_CHAT_ID,
-        'text': f"Test-Nachricht\n{text}"
+        'text': f"Test-Nachricht\n{text}",
+        'parse_mode': 'Markdown'
     }
     response = requests.post(url, data=data)
     print("🔍 Telegram Response:", response.status_code, response.text)
@@ -60,4 +79,5 @@ def send_to_telegram(text):
 # Render erwartet das
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
+
 
