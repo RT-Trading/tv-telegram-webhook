@@ -21,31 +21,6 @@ def calc_tp(entry, sl, side):
     else:
         return entry - risk, entry - 3 * risk, entry - 5 * risk
 
-# Telegram-Nachricht formatieren
-def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
-    if side == 'long':
-        direction = '🟢 *LONG* 📈'
-    elif side == 'short':
-        direction = '🔴 *SHORT* 📉'
-    else:
-        direction = f'*{side.upper()}*'
-
-    return f"""🔔 *{symbol}* 🔔  
-{direction}
-
-📍 *Entry*: `{entry:.2f}`  
-🛑 *SL*: `{sl:.2f}`
-
-💶 *TP 1*: `{tp1:.2f}`  
-💶 *TP 2*: `{tp2:.2f}`  
-💶 *TP 3*: `{tp3:.2f}`
-
-⚠️ *Keine Finanzberatung!*  
-📌 Achtet auf *Money Management*!  
-❗️Sehr *riskant* – aufpassen!  
-🔁 *Bei TP 1 auf Breakeven setzen* oder eigenständig managen.
-"""
-
 # Webhook
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -60,7 +35,24 @@ def webhook():
 
     sl = calc_sl(entry, side)
     tp1, tp2, tp3 = calc_tp(entry, sl, side)
-    msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
+
+    side_icon = '🟢 LONG' if side == 'long' else '🔴 SHORT'
+
+    msg = f"""🔔 *{symbol}* 🔔  
+{side_icon}
+
+📍 *Entry*: {entry:.2f}  
+🛑 *SL*: {sl:.2f}
+
+💶 *TP 1*: {tp1:.2f}  
+💶 *TP 2*: {tp2:.2f}  
+💶 *TP 3*: {tp3:.2f}
+
+⚠️ *Keine Finanzberatung!*  
+📌 *Achtet auf Money Management!*  
+❗️ *Sehr riskant – aufpassen!*  
+🔁 *Bei TP 1 auf Breakeven setzen oder eigenständig managen.*
+"""
 
     send_to_telegram(msg)
     return 'OK', 200
