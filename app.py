@@ -49,15 +49,17 @@ def webhook():
     send_to_telegram(msg)
     return 'OK', 200
 
-# Telegram senden
+# Telegram senden – Testversion mit Debug-Ausgabe
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
         'chat_id': TELEGRAM_CHAT_ID,
-        'text': text,
-        'parse_mode': 'Markdown'
+        'text': f"Test-Nachricht\n{text}",
+        # 'parse_mode': 'Markdown'  # für Fehlersuche deaktiviert
     }
-    requests.post(url, data=data)
+    response = requests.post(url, data=data)
+    print("🔍 Telegram Response:", response.status_code, response.text)
+
 
 # Render erwartet diese Zeile
 if __name__ == '__main__':
