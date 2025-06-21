@@ -4,7 +4,7 @@ import os
 
 app = Flask(__name__)
 
-# Telegram-Konfiguration – entweder Umgebungsvariable oder direkt einsetzen
+# Telegram-Konfiguration
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'HIER_DEIN_BOT_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', 'HIER_DEINE_CHAT_ID')
 
@@ -20,7 +20,7 @@ def calc_tp(entry, sl, side):
     else:
         return entry - risk, entry - 3 * risk, entry - 5 * risk
 
-# Nachricht an Telegram formatieren
+# Formatierte Telegram-Nachricht
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     direction = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
     return f"""🔔 *{symbol}* 🔔  
@@ -43,32 +43,42 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.get_json()
-    print("📥 Empfangenes JSON:", data)  # Debug-Ausgabe für Logs
+    print("📥 Empfangenes JSON:", data)  # Debug-Ausgabe
 
     try:
-        entry = float(data['entry'])
-        raw_side = data.get('side') or data.get('direction', '')
-        side = raw_side.strip().lower()
-        symbol = data.get('symbol', '').strip().upper()
+        # ENTRY-Preis
+        entry = float(data.get('entry', 0))
 
+        # DIRECTION – robust lesen
+        raw_direction = data.get('side') or data.get('direction')
+        if raw_direction is None:
+            return '❌ Kein direction/side-Feld empfangen.', 400
+        side = str(raw_direction).strip().lower()
+
+        # SYMBOL
+        symbol = str(data.get('symbol', '')).strip().upper()
+
+        # Validierung
         if not symbol or side not in ['long', 'short']:
-            print(f"⚠️ Ungültige Richtung oder Symbol fehlt: direction='{raw_side}', parsed='{side}', symbol='{symbol}'")
-            return '❌ Fehler: symbol oder direction fehlt/ungültig', 400
+            return f'❌ Fehler: ungültige Richtung "{raw_direction}" oder fehlender Symbol', 400
 
     except (KeyError, ValueError, TypeError) as e:
         print("❌ Parsing-Fehler:", e)
         return '❌ Ungültige Daten – entry, direction und symbol erforderlich.', 400
 
+    # Berechnungen
     sl = calc_sl(entry, side)
     tp1, tp2, tp3 = calc_tp(entry, sl, side)
     msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
+    # Telegram versenden
     send_to_telegram(msg)
 
+    # Bestätigung + Log
     print(f"✅ Webhook verarbeitet: {symbol} | {side.upper()} | Entry={entry:.5f}")
     return '✅ OK', 200
 
-# Telegram-Nachricht senden
+# Telegram-Nachricht versenden
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {
@@ -79,9 +89,6 @@ def send_to_telegram(text):
     response = requests.post(url, data=data)
     print("📨 Telegram Antwort:", response.status_code, response.text)
 
-# Lokaler Serverstart
+# Server starten
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
-
-
-
