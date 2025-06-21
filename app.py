@@ -36,23 +36,19 @@ def webhook():
     try:
         entry = float(data['entry'])
         side = str(data.get('side', '')).strip().lower()
-        symbol = data.get('symbol', 'Unknown').upper()
+        if side not in ['long', 'short']:
+            return 'Invalid side. Use "long" or "short".', 400
+        symbol = str(data.get('symbol', 'Unknown')).upper()
     except (KeyError, ValueError, TypeError):
         return 'Invalid input', 400
 
     sl = calc_sl(entry, side)
     tp1, tp2, tp3 = calc_tp(entry, sl, side)
 
-    # ICON je nach Richtung
-    if side == 'long':
-        direction_icon = "🟢 LONG"
-    elif side == 'short':
-        direction_icon = "🔴 SHORT"
-    else:
-        direction_icon = "⚪️ UNBEKANNT"
+    direction_icon = '🟢 LONG' if side == 'long' else '🔴 SHORT'
 
-    # Nachricht formatieren
-    msg = f"""🔔  *{symbol}*  🔔
+    msg = f"""Test-Nachricht
+🔔 *{symbol}* 🔔  
 {direction_icon}
 
 📍 *Entry:* {entry:.2f}  
@@ -64,11 +60,12 @@ def webhook():
 
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
-❗️Sehr *riskant* – aufpassen!  
+❗️ *Sehr riskant* – aufpassen!  
 🔁 *Bei TP 1 auf Breakeven setzen* oder eigenständig managen."""
 
     send_to_telegram(msg)
     return 'OK', 200
+
 
 # Telegram senden
 def send_to_telegram(text):
@@ -84,6 +81,8 @@ def send_to_telegram(text):
 # Render erwartet das
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
+
+
 
 
 
