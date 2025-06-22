@@ -83,30 +83,32 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
 def webhook():
     try:
         data = request.get_json(force=True)
+        print("📩 ERHALTEN:", data)
+
         if not data:
             raise ValueError("❌ Kein JSON erhalten")
 
         entry = float(data.get("entry", 0))
-        raw_side = data.get("side") or data.get("direction", "")
+        raw_side = data.get("side") or data.get("direction") or ""
         side = str(raw_side).strip().lower()
         symbol = str(data.get("symbol", "")).strip().upper()
 
-        if not entry or side not in ['long', 'short'] or not symbol:
-            raise ValueError(f"❌ Ungültige Daten: entry={entry}, side={side}, symbol={symbol}")
+        if not entry or not symbol or side not in ["long", "short"]:
+            raise ValueError(f"❌ Ungültige Felder → entry: {entry}, side: {side}, symbol: {symbol}")
 
         sl = calc_sl(entry, side)
         tp1, tp2, tp3 = calc_tp(entry, sl, side)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
         send_to_telegram(msg)
-        print(f"✅ Nachricht gesendet: {symbol} | {side.upper()} | Entry={entry:.5f}")
+        print(f"✅ GESENDET: {symbol} | {side.upper()} | Entry: {entry:.5f}")
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
 
         return '✅ OK', 200
 
     except Exception as e:
-        print(f"❌ Webhook-Fehler: {e}")
-        return '❌ Fehler beim Verarbeiten der Anfrage', 400
+        print("❌ FEHLER:", str(e))
+        return f'❌ Fehler: {str(e)}', 400
 
 
 
