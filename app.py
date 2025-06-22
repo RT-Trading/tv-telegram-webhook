@@ -1,6 +1,7 @@
 from flask import Flask, request
 import requests
 import os
+import threading
 
 app = Flask(__name__)
 
@@ -52,13 +53,14 @@ def webhook():
         symbol = str(data.get('symbol', '')).strip().upper()
 
         if not symbol or side not in ['long', 'short']:
-            return f'❌ Ungültige Richtung "{side}" oder kein Symbol', 400
+            return f'❌ Ungültige Richtung \"{side}\" oder kein Symbol', 400
 
         sl = calc_sl(entry, side)
         tp1, tp2, tp3 = calc_tp(entry, sl, side)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
-        send_to_telegram(msg)
+        # Parallel senden, damit Antwort schnell kommt
+        threading.Thread(target=send_to_telegram, args=(msg,)).start()
 
         print(f"✅ Gesendet: {symbol} | {side.upper()} | Entry={entry:.5f}")
         return '✅ OK', 200
@@ -67,7 +69,7 @@ def webhook():
         print("❌ Fehler beim Verarbeiten:", e)
         return '❌ Fehlerhafte Daten', 400
 
-# Telegram senden
+# Telegram senden mit Timeout & Error-Handling
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -75,4 +77,8 @@ def send_to_telegram(text):
         'text': f"Test-Nachricht\n{text}",
         'parse_mode': 'Markdown'
     }
-    requests.post(url, data=payload)
+    try:
+        requests.post(url, data=payload, timeout=3)
+    except Exception as e:
+        print("⚠️ Telegram-Fehler:", e)
+
