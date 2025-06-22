@@ -1,13 +1,13 @@
 from flask import Flask, request
 import requests
 import os
+import json
 
 app = Flask(__name__)
 
 # === Telegram Konfiguration ===
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'DEIN_BOT_TOKEN_HIER')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', 'DEINE_CHAT_ID_HIER')
-
+TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
+TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
 # === Risiko und Ziel-Level berechnen ===
 def calc_sl(entry, side, risk_pct=0.01):
@@ -19,7 +19,6 @@ def calc_tp(entry, sl, side):
         return entry + risk, entry + 3 * risk, entry + 5 * risk
     else:
         return entry - risk, entry - 3 * risk, entry - 5 * risk
-
 
 # === Telegram Nachricht formatieren ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
@@ -40,7 +39,6 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 🔁 *Bei TP 1 auf Breakeven setzen* oder eigenständig managen.
 """
 
-
 # === Telegram senden mit Fehlerbehandlung ===
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -55,6 +53,30 @@ def send_to_telegram(text):
         print(f"❌ Telegram-Fehler: {response.status_code} → {response.text}")
         raise Exception("Telegram-Senden fehlgeschlagen.")
 
+# === Trades speichern ===
+def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
+    filename = 'trades.json'
+    trade = {
+        "symbol": symbol,
+        "entry": entry,
+        "sl": sl,
+        "tp1": tp1,
+        "tp2": tp2,
+        "tp3": tp3,
+        "side": side,
+        "closed": False
+    }
+
+    try:
+        with open(filename, "r") as f:
+            trades = json.load(f)
+    except FileNotFoundError:
+        trades = []
+
+    trades.append(trade)
+
+    with open(filename, "w") as f:
+        json.dump(trades, f, indent=2)
 
 # === Webhook-Route ===
 @app.route('/webhook', methods=['POST'])
@@ -77,13 +99,15 @@ def webhook():
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
         send_to_telegram(msg)
-
         print(f"✅ Nachricht gesendet: {symbol} | {side.upper()} | Entry={entry:.5f}")
+        save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
+
         return '✅ OK', 200
 
     except Exception as e:
         print(f"❌ Webhook-Fehler: {e}")
         return '❌ Fehler beim Verarbeiten der Anfrage', 400
+
 
 
 # === Startpunkt für lokalen Test (optional) ===
