@@ -5,11 +5,21 @@ import os
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+def get_price(symbol):
+    symbol = symbol.upper()
 
-def get_price(symbol="bitcoin"):
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={symbol}&vs_currencies=usd"
+    if symbol == "BTCUSD":
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+        r = requests.get(url)
+        return r.json().get("bitcoin", {}).get("usd", 0)
+
+    # Alpha Vantage API (z. B. EURUSD, NAS100 → NASDAQ wird nicht direkt unterstützt!)
+    api_key = os.environ.get("ALPHA_API_KEY")
+    url = f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency={symbol[:3]}&to_currency={symbol[3:]}&apikey={api_key}"
     r = requests.get(url)
-    return r.json().get(symbol, {}).get("usd", 0)
+    data = r.json().get("Realtime Currency Exchange Rate", {})
+    return float(data.get("5. Exchange Rate", 0))
+
 
 def send_telegram(msg):
     print("📨 Sende:", msg)
