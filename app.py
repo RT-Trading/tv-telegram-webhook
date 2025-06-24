@@ -108,7 +108,8 @@ def webhook():
         sl = calc_sl(entry, side)
         tp1, tp2, tp3 = calc_tp(entry, sl, side)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
-
+        
+        print("🧪 Nachricht an Telegram:", msg)
         send_to_telegram(msg)
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
         print("✅ Gesendet:", symbol, side, entry)
