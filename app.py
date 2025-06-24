@@ -5,57 +5,68 @@ import json
 
 app = Flask(__name__)
 
-# === Telegram Konfiguration ===
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === Risiko und Ziel-Level berechnen ===
-def calc_sl(entry, side, risk_pct=0.01):
+# === SL 0.7 %, TP1 2.1 %, TP2 3.5 %, TP3 4.9 % ===
+def calc_sl(entry, side):
+    risk_pct = 0.007
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
 
 def calc_tp(entry, sl, side):
     risk = abs(entry - sl)
     if side == 'long':
-        return entry + risk, entry + 3 * risk, entry + 5 * risk
+        return entry + 3 * risk, entry + 5 * risk, entry + 7 * risk
     else:
-        return entry - risk, entry - 3 * risk, entry - 5 * risk
+        return entry - 3 * risk, entry - 5 * risk, entry - 7 * risk
 
-# === Telegram Nachricht formatieren ===
+# 🔧 Präzision pro Symbol
+def get_precision(symbol):
+    symbol = symbol.upper()
+    if any(sym in symbol for sym in ["JPY", "XAU", "XAG"]):
+        return 3  # Gold/Silber/JPY z. B.
+    elif "USD" in symbol or "EUR" in symbol:
+        return 5  # Forex
+    elif symbol.startswith("NAS") or symbol.startswith("GER") or symbol.startswith("SPX"):
+        return 2  # Indizes
+    elif symbol == "BTCUSD" or symbol == "ETHUSD":
+        return 0  # Crypto grob
+    else:
+        return 2  # Standard
+
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
+    precision = get_precision(symbol)
+    fmt = f"{{:.{precision}f}}"
     direction = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
+
     return f"""🔔 *{symbol}* 🔔  
 {direction}
 
-📍 *Entry*: `{entry:.5f}`  
-🛑 *SL*: `{sl:.5f}`
+📍 *Entry*: `{fmt.format(entry)}`  
+🛑 *SL*: `{fmt.format(sl)}`
 
-💶 *TP 1 (1:1)*: `{tp1:.5f}`  
-💶 *TP 2 (1:3)*: `{tp2:.5f}`  
-💶 *TP 3 (1:5)*: `{tp3:.5f}`
+🎯 *TP 1 (2.1%)*: `{fmt.format(tp1)}`  
+🎯 *TP 2 (3.5%)*: `{fmt.format(tp2)}`  
+🎯 *TP 3 (4.9%)*: `{fmt.format(tp3)}`
 
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
-❗️Sehr *riskant* – aufpassen!  
-🔁 *Bei TP 1 auf Breakeven setzen* oder eigenständig managen.
+🔁 *TP1 erreicht → Breakeven setzen*.
 """
 
-# === Telegram senden mit Fehlerbehandlung ===
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         'chat_id': TELEGRAM_CHAT_ID,
-        'text': f"Test-Nachricht\n{text}",
+        'text': text,
         'parse_mode': 'Markdown'
     }
-    response = requests.post(url, data=payload)
+    r = requests.post(url, data=payload)
+    if r.status_code != 200:
+        print("❌ Telegram-Fehler:", r.text)
+        raise Exception("Telegram-Fehler")
 
-    if response.status_code != 200:
-        print(f"❌ Telegram-Fehler: {response.status_code} → {response.text}")
-        raise Exception("Telegram-Senden fehlgeschlagen.")
-
-# === Trades speichern ===
 def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
-    filename = 'trades.json'
     trade = {
         "symbol": symbol,
         "entry": entry,
@@ -66,52 +77,42 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
         "side": side,
         "closed": False
     }
-
     try:
-        with open(filename, "r") as f:
+        with open("trades.json", "r") as f:
             trades = json.load(f)
     except FileNotFoundError:
         trades = []
 
     trades.append(trade)
-
-    with open(filename, "w") as f:
+    with open("trades.json", "w") as f:
         json.dump(trades, f, indent=2)
 
-# === Webhook-Route ===
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
         data = request.get_json(force=True)
-        print("📩 ERHALTEN:", data)
-
-        if not data:
-            raise ValueError("❌ Kein JSON erhalten")
+        print("📩 Empfangen:", data)
 
         entry = float(data.get("entry", 0))
-        raw_side = data.get("side") or data.get("direction") or ""
-        side = str(raw_side).strip().lower()
+        side = (data.get("side") or data.get("direction") or "").strip().lower()
         symbol = str(data.get("symbol", "")).strip().upper()
 
-        if not entry or not symbol or side not in ["long", "short"]:
-            raise ValueError(f"❌ Ungültige Felder → entry: {entry}, side: {side}, symbol: {symbol}")
+        if not entry or side not in ["long", "short"] or not symbol:
+            raise ValueError("❌ Ungültige Daten")
 
         sl = calc_sl(entry, side)
         tp1, tp2, tp3 = calc_tp(entry, sl, side)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
         send_to_telegram(msg)
-        print(f"✅ GESENDET: {symbol} | {side.upper()} | Entry: {entry:.5f}")
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
-
-        return '✅ OK', 200
+        print("✅ Gesendet:", symbol, side, entry)
+        return "✅ OK", 200
 
     except Exception as e:
-        print("❌ FEHLER:", str(e))
-        return f'❌ Fehler: {str(e)}', 400
+        print("❌ Fehler:", str(e))
+        return f"❌ Fehler: {str(e)}", 400
 
-
-
-# === Startpunkt für lokalen Test (optional) ===
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
