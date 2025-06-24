@@ -14,22 +14,33 @@ def calc_sl(entry, side):
     risk_pct = 0.005
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
 
-def calc_tp(entry, sl, side):
-    risk = abs(entry - sl)
-    if side == 'long':
-        return entry + 2 * risk, entry + 3.6 * risk, entry + 5.6 * risk
+# Neue flexible TP-Berechnung nach Symbol
+def calc_tp(entry, sl, side, symbol):
+    if symbol == "XAUUSD":
+        # Angepasste kleinere Ziele für Gold
+        tp_pct = [0.004, 0.008, 0.012]  # 0.4%, 0.8%, 1.2%
     else:
-        return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
+        # Standard-Ziele für andere
+        risk = abs(entry - sl)
+        if side == 'long':
+            return entry + 2 * risk, entry + 3.6 * risk, entry + 5.6 * risk
+        else:
+            return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
+
+    # Prozentuale Methode (für Gold etc.)
+    if side == "long":
+        return entry * (1 + tp_pct[0]), entry * (1 + tp_pct[1]), entry * (1 + tp_pct[2])
+    else:
+        return entry * (1 - tp_pct[0]), entry * (1 - tp_pct[1]), entry * (1 - tp_pct[2])
 
 # === Nachricht formatieren mit Symbol und korrektem Icon ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
-    # Dezimalstellen je nach Markt
     if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
         digits = 2
     elif symbol in ["EURUSD", "GBPUSD"]:
         digits = 5
     else:
-        digits = 4  # fallback
+        digits = 4
 
     fmt = f"{{:.{digits}f}}"
     direction = "🟢 *LONG* 📈" if side == 'long' else "🔴 *SHORT* 📉"
@@ -60,9 +71,7 @@ def send_to_telegram(text):
     }
 
     print("📤 Telegram-Payload:", payload)
-
     r = requests.post(url, data=payload)
-
     print("📡 Telegram Response:", r.status_code, r.text)
 
     if r.status_code != 200:
@@ -106,9 +115,9 @@ def webhook():
             raise ValueError("❌ Ungültige Daten")
 
         sl = calc_sl(entry, side)
-        tp1, tp2, tp3 = calc_tp(entry, sl, side)
+        tp1, tp2, tp3 = calc_tp(entry, sl, side, symbol)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
-        
+
         print("🧪 Nachricht an Telegram:", msg)
         send_to_telegram(msg)
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
@@ -126,7 +135,6 @@ def show_trades():
             return f.read(), 200, {'Content-Type': 'application/json'}
     except Exception as e:
         return f"Fehler beim Laden: {e}", 500
-
 
 # === Lokaler Teststart ===
 if __name__ == "__main__":
