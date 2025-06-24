@@ -9,7 +9,7 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === SL: 0.7 %, TP1: 2.1 %, TP2: 3.5 %, TP3: 4.9 % ===
+# === SL: 0.7 %, TP1/TP2/TP3 als Multiplikatoren auf das Risiko ===
 def calc_sl(entry, side):
     risk_pct = 0.007
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
@@ -21,7 +21,7 @@ def calc_tp(entry, sl, side):
     else:
         return entry - 3 * risk, entry - 5 * risk, entry - 7 * risk
 
-# === Dezimalstellen abhängig vom Symbol bestimmen ===
+# === Dezimalstellen je nach Symbol bestimmen ===
 def get_decimals(symbol):
     symbol = symbol.upper()
     if symbol in ["BTCUSD", "XAUUSD", "GOLD", "NAS100"]:
@@ -31,21 +31,21 @@ def get_decimals(symbol):
     else:
         return 3  # Standard fallback
 
-# === Nachricht formatieren ===
+# === Formatierte Nachricht ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     direction = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
     decimals = get_decimals(symbol)
     fmt = f"{{:.{decimals}f}}"
 
-    return f"""🔔 *Test-Nachricht* 🔔  
+    return f"""🔔 *RT-Trading VIP* 🔔  
 {direction}
 
 📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
 
-🎯 *TP 1 *: `{fmt.format(tp1)}`  
-🎯 *TP 2 *: `{fmt.format(tp2)}`  
-🎯 *TP 3 *: `{fmt.format(tp3)}`
+🎯 *TP 1*: `{fmt.format(tp1)}`  
+🎯 *TP 2*: `{fmt.format(tp2)}`  
+🎯 *Full TP*: `{fmt.format(tp3)}`
 
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
@@ -114,7 +114,6 @@ def webhook():
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
-# === Lokaler Teststart ===
+# === Lokaler Start ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
