@@ -9,35 +9,35 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === SL: 0.7 %, TP1/TP2/TP3 als Multiplikatoren auf das Risiko ===
+# === SL: 0.7 %, TP1: 1.0 %, TP2: 1.8 %, Full TP: 2.8 % ===
 def calc_sl(entry, side):
     risk_pct = 0.007
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
 
-def calc_tp(entry, sl, side):
-    risk = abs(entry - sl)
+def calc_tp(entry, side):
+    tp1_pct = 0.010
+    tp2_pct = 0.018
+    tp3_pct = 0.028
+
     if side == 'long':
-        return entry + 3 * risk, entry + 5 * risk, entry + 7 * risk
+        return entry * (1 + tp1_pct), entry * (1 + tp2_pct), entry * (1 + tp3_pct)
     else:
-        return entry - 3 * risk, entry - 5 * risk, entry - 7 * risk
+        return entry * (1 - tp1_pct), entry * (1 - tp2_pct), entry * (1 - tp3_pct)
 
-# === Dezimalstellen je nach Symbol bestimmen ===
-def get_decimals(symbol):
-    symbol = symbol.upper()
-    if symbol in ["BTCUSD", "XAUUSD", "GOLD", "NAS100"]:
-        return 2
-    elif symbol in ["EURUSD", "GBPUSD", "USDJPY"]:
-        return 5
-    else:
-        return 3  # Standard fallback
-
-# === Formatierte Nachricht ===
+# === Formatierte Nachricht mit Symbol-abhängiger Präzision ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     direction = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
-    decimals = get_decimals(symbol)
-    fmt = f"{{:.{decimals}f}}"
 
-    return f"""🔔 *RT-Trading VIP* 🔔  
+    if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
+        digits = 2
+    elif symbol in ["EURUSD", "GBPUSD"]:
+        digits = 5
+    else:
+        digits = 4  # fallback
+
+    fmt = f"{{:.{digits}f}}"
+
+    return f"""🔔 *Test-Nachricht* 🔔  
 {direction}
 
 📍 *Entry*: `{fmt.format(entry)}`  
@@ -60,9 +60,9 @@ def send_to_telegram(text):
         'text': text,
         'parse_mode': 'Markdown'
     }
-    response = requests.post(url, data=payload)
-    if response.status_code != 200:
-        print("❌ Telegram-Fehler:", response.text)
+    r = requests.post(url, data=payload)
+    if r.status_code != 200:
+        print("❌ Telegram-Fehler:", r.text)
         raise Exception("Telegram-Fehler")
 
 # === Trade speichern ===
@@ -102,7 +102,7 @@ def webhook():
             raise ValueError("❌ Ungültige Daten")
 
         sl = calc_sl(entry, side)
-        tp1, tp2, tp3 = calc_tp(entry, sl, side)
+        tp1, tp2, tp3 = calc_tp(entry, side)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
         send_to_telegram(msg)
@@ -114,7 +114,6 @@ def webhook():
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
-# === Lokaler Start ===
+# === Lokaler Teststart ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
