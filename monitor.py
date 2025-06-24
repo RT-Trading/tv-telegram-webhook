@@ -2,6 +2,7 @@ import time
 import json
 import requests
 import os
+from datetime import datetime
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -33,37 +34,64 @@ def get_price(symbol):
     except:
         return 0
 
-def send_telegram(msg):
-    print("📨 Sende:", msg)
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-    )
+
+def send_telegram(msg, retry=True):
+    try:
+        print("📨 Sende:", msg)
+        res = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=10
+        )
+        if res.status_code != 200:
+            raise Exception(f"Status {res.status_code}: {res.text}")
+        time.sleep(1)  # Anti-Rate-Limit
+    except Exception as e:
+        log_error(f"Telegram Fehler: {e}")
+        if retry:
+            print("🔁 Versuche erneut zu senden…")
+            send_telegram(msg, retry=False)
+
+
+def log_error(error_text):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open("errors.log", "a") as f:
+        f.write(f"[{now}] {error_text}\n")
+
 
 def load_trades():
     if not os.path.exists("trades.json"):
         return []
-    with open("trades.json", "r") as f:
-        return json.load(f)
+    try:
+        with open("trades.json", "r") as f:
+            return json.load(f)
+    except Exception as e:
+        log_error(f"Fehler beim Laden von trades.json: {e}")
+        return []
+
 
 def save_trades(trades):
-    with open("trades.json", "w") as f:
-        json.dump(trades, f, indent=2)
+    try:
+        with open("trades.json", "w") as f:
+            json.dump(trades, f, indent=2)
+    except Exception as e:
+        log_error(f"Fehler beim Speichern von trades.json: {e}")
+
 
 def check_trades():
     trades = load_trades()
     updated = []
 
     for t in trades:
-        if t["closed"]:
+        if t.get("closed"):
             updated.append(t)
             continue
 
         symbol = t.get("symbol", "").upper()
-        entry = t["entry"]
-        sl = t["sl"]
-        side = t["side"]
-        tp1, tp2, tp3 = t["tp1"], t["tp2"], t["tp3"]
+        entry = t.get("entry")
+        sl = t.get("sl")
+        side = t.get("side")
+        tp1, tp2, tp3 = t.get("tp1"), t.get("tp2"), t.get("tp3")
 
         price = get_price(symbol)
         print(f"🔍 {symbol} Preis: {price}")
@@ -87,7 +115,6 @@ def check_trades():
                 hit = "✅ *TP2 erreicht*"
             elif price >= tp1:
                 hit = "✅ *TP1 erreicht*"
-
         elif side == "short":
             if price >= sl:
                 hit = "❌ *SL erreicht*"
@@ -122,11 +149,12 @@ def check_trades():
 
     save_trades(updated)
 
+
 if __name__ == "__main__":
     print("🟢 Monitor gestartet…")
     while True:
         try:
             check_trades()
         except Exception as e:
-            print("❌ Fehler:", e)
+            log_error(f"Hauptfehler: {e}")
         time.sleep(60)
