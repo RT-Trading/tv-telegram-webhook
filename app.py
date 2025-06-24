@@ -9,7 +9,7 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === SL: 0.5 %, TP1: 1.0 %, TP2: 1.8 %, Full TP: 2.8 %
+# === SL: 0,5 %, TP1: 1,0 %, TP2: 1,8 %, Full TP: 2,8 % ===
 def calc_sl(entry, side):
     risk_pct = 0.005
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
@@ -21,9 +21,9 @@ def calc_tp(entry, sl, side):
     else:
         return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
-# === Nachricht formatieren ===
+# === Nachricht formatieren mit Symbol und korrektem Icon ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
-    # Symbolabhängige Nachkommastellen
+    # Dezimalstellen je nach Markt
     if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
         digits = 2
     elif symbol in ["EURUSD", "GBPUSD"]:
@@ -32,14 +32,10 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
         digits = 4  # fallback
 
     fmt = f"{{:.{digits}f}}"
-
-    # Richtungsanzeige
-    if side == 'long':
-        direction = "🟢 *LONG* 📈"
-    else:
-        direction = "🔴 *SHORT* 📉"
+    direction = "🟢 *LONG* 📈" if side == 'long' else "🔴 *SHORT* 📉"
 
     return f"""🔔 *RT-Trading VIP* 🔔  
+📊 *{symbol}*  
 {direction}
 
 📍 *Entry*: `{fmt.format(entry)}`  
@@ -60,8 +56,7 @@ def send_to_telegram(text):
     payload = {
         'chat_id': TELEGRAM_CHAT_ID,
         'text': text,
-        'parse_mode': 'Markdown',
-        'disable_web_page_preview': True
+        'parse_mode': 'Markdown'
     }
     r = requests.post(url, data=payload)
     if r.status_code != 200:
@@ -117,6 +112,6 @@ def webhook():
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
-# === Lokaler Start ===
+# === Lokaler Teststart ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
