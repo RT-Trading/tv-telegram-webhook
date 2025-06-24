@@ -58,7 +58,13 @@ def send_to_telegram(text):
         'text': text,
         'parse_mode': 'Markdown'
     }
+
+    print("📤 Telegram-Payload:", payload)
+
     r = requests.post(url, data=payload)
+
+    print("📡 Telegram Response:", r.status_code, r.text)
+
     if r.status_code != 200:
         print("❌ Telegram-Fehler:", r.text)
         raise Exception("Telegram-Fehler")
