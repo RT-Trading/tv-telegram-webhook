@@ -112,6 +112,15 @@ def webhook():
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
+@app.route("/trades", methods=["GET"])
+def show_trades():
+    try:
+        with open("trades.json", "r") as f:
+            return f.read(), 200, {'Content-Type': 'application/json'}
+    except Exception as e:
+        return f"Fehler beim Laden: {e}", 500
+
+
 # === Lokaler Teststart ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
