@@ -18,7 +18,6 @@ def get_price(symbol):
         except:
             return 0
 
-    # Alpha Vantage Symbol-Unterstützung prüfen
     from_curr = symbol[:3]
     to_curr = symbol[3:]
 
@@ -33,7 +32,6 @@ def get_price(symbol):
         return float(data.get("5. Exchange Rate", 0))
     except:
         return 0
-
 
 def send_telegram(msg):
     print("📨 Sende:", msg)
@@ -75,7 +73,6 @@ def check_trades():
             updated.append(t)
             continue
 
-        # Treffererkennung
         hit = None
         close_trade = False
 
@@ -104,16 +101,26 @@ def check_trades():
                 hit = "✅ *TP1 erreicht*"
 
         if hit:
-            # Dynamische Formatierung je nach Symbol
             digits = 5 if symbol in ["EURUSD", "GBPUSD"] else 2
             fmt = f"{{:.{digits}f}}"
             msg = (
                 f"*{symbol}* | *{side.upper()}*\n"
                 f"{hit}\n"
                 f"📍 Entry: `{fmt.format(entry)}`\n"
-                f"�
+                f"🛑 SL: `{fmt.format(sl)}`\n"
+                f"🎯 TP1: `{fmt.format(tp1)}`\n"
+                f"🎯 TP2: `{fmt.format(tp2)}`\n"
+                f"🏁 Full TP: `{fmt.format(tp3)}`\n"
+                f"💰 Aktueller Preis: `{fmt.format(price)}`"
+            )
+            send_telegram(msg)
 
+        if close_trade:
+            t["closed"] = True
 
+        updated.append(t)
+
+    save_trades(updated)
 
 if __name__ == "__main__":
     print("🟢 Monitor gestartet…")
@@ -123,4 +130,3 @@ if __name__ == "__main__":
         except Exception as e:
             print("❌ Fehler:", e)
         time.sleep(60)
-
