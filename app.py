@@ -21,21 +21,22 @@ def calc_tp(entry, sl, side):
     else:
         return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
-# === Formatierte Nachricht (TP-Prozente ausgeblendet, Full TP angepasst) ===
+# === Formatierte Nachricht mit Symbol-abhängiger Präzision und korrektem Icon ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
-    direction = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
+    direction_icon = '📈' if side == 'long' else '📉'
+    direction_text = '🟢 *LONG*' if side == 'long' else '🔴 *SHORT*'
 
     if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
         digits = 2
     elif symbol in ["EURUSD", "GBPUSD"]:
         digits = 5
     else:
-        digits = 4
+        digits = 4  # fallback
 
     fmt = f"{{:.{digits}f}}"
 
     return f"""🔔 *RT-Trading VIP* 🔔  
-{direction}
+{direction_text} {direction_icon}
 
 📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
@@ -59,7 +60,7 @@ def send_to_telegram(text):
     }
     r = requests.post(url, data=payload)
     if r.status_code != 200:
-        print("Telegram-Fehler:", r.text)
+        print("❌ Telegram-Fehler:", r.text)
         raise Exception("Telegram-Fehler")
 
 # === Trade speichern ===
@@ -89,14 +90,14 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
 def webhook():
     try:
         data = request.get_json(force=True)
-        print("Empfangen:", data)  # Ohne Emojis → UTF-8 sicher
+        print("📩 Empfangen:", data)
 
         entry = float(data.get("entry", 0))
         side = (data.get("side") or data.get("direction") or "").strip().lower()
         symbol = str(data.get("symbol", "")).strip().upper()
 
         if not entry or side not in ["long", "short"] or not symbol:
-            raise ValueError("Ungültige Daten")
+            raise ValueError("❌ Ungültige Daten")
 
         sl = calc_sl(entry, side)
         tp1, tp2, tp3 = calc_tp(entry, sl, side)
@@ -104,14 +105,13 @@ def webhook():
 
         send_to_telegram(msg)
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
-        print("Gesendet:", symbol, side.upper(), f"Entry: {entry}")
+        print("✅ Gesendet:", symbol, side, entry)
         return "✅ OK", 200
 
     except Exception as e:
-        print("Fehler:", str(e))
+        print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
 # === Lokaler Teststart ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
