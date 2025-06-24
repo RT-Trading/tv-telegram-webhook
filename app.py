@@ -5,10 +5,23 @@ import json
 
 app = Flask(__name__)
 
+# === Telegram Konfiguration ===
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === SL 0.7 %, TP1 2.1 %, TP2 3.5 %, TP3 4.9 % ===
+# === Rundungslogik je Symbol ===
+def get_precision(symbol):
+    symbol = symbol.upper()
+    if "BTC" in symbol or "NAS" in symbol or "SPX" in symbol:
+        return 2
+    elif "JPY" in symbol:
+        return 3
+    elif "USD" in symbol:
+        return 5
+    else:
+        return 4
+
+# === SL & TP Berechnung ===
 def calc_sl(entry, side):
     risk_pct = 0.007
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
@@ -20,40 +33,28 @@ def calc_tp(entry, sl, side):
     else:
         return entry - 3 * risk, entry - 5 * risk, entry - 7 * risk
 
-# 🔧 Präzision pro Symbol
-def get_precision(symbol):
-    symbol = symbol.upper()
-    if any(sym in symbol for sym in ["JPY", "XAU", "XAG"]):
-        return 3  # Gold/Silber/JPY z. B.
-    elif "USD" in symbol or "EUR" in symbol:
-        return 5  # Forex
-    elif symbol.startswith("NAS") or symbol.startswith("GER") or symbol.startswith("SPX"):
-        return 2  # Indizes
-    elif symbol == "BTCUSD" or symbol == "ETHUSD":
-        return 0  # Crypto grob
-    else:
-        return 2  # Standard
-
+# === Nachricht formatieren ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     precision = get_precision(symbol)
-    fmt = f"{{:.{precision}f}}"
+    fmt = lambda x: f"{x:.{precision}f}"
     direction = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
 
     return f"""🔔 *{symbol}* 🔔  
 {direction}
 
-📍 *Entry*: `{fmt.format(entry)}`  
-🛑 *SL*: `{fmt.format(sl)}`
+📍 *Entry*: `{fmt(entry)}`
+🛑 *SL*: `{fmt(sl)}`
 
-🎯 *TP 1 (2.1%)*: `{fmt.format(tp1)}`  
-🎯 *TP 2 (3.5%)*: `{fmt.format(tp2)}`  
-🎯 *TP 3 (4.9%)*: `{fmt.format(tp3)}`
+🎯 *TP 1 (2.1%)*: `{fmt(tp1)}`
+🎯 *TP 2 (3.5%)*: `{fmt(tp2)}`
+🎯 *TP 3 (4.9%)*: `{fmt(tp3)}`
 
 ⚠️ *Keine Finanzberatung!*  
-📌 Achtet auf *Money Management*!  
-🔁 *TP1 erreicht → Breakeven setzen*.
+📌 Achtet auf *Money Management*!
+🔁 TP1 erreicht → *Breakeven setzen*
 """
 
+# === Telegram senden ===
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -66,6 +67,7 @@ def send_to_telegram(text):
         print("❌ Telegram-Fehler:", r.text)
         raise Exception("Telegram-Fehler")
 
+# === Trade speichern ===
 def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
     trade = {
         "symbol": symbol,
@@ -87,6 +89,7 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
     with open("trades.json", "w") as f:
         json.dump(trades, f, indent=2)
 
+# === Webhook ===
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
@@ -113,6 +116,6 @@ def webhook():
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
+# === Lokaler Start (optional) ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
