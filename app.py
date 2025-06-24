@@ -9,9 +9,9 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === SL: 0.5 %, TP1: 1.0 %, TP2: 1.8 %, Full TP: 2.8 % ===
+# === SL: 0,5 %, TP1: 1,0 %, TP2: 1,8 %, Full TP: 2,8 %
 def calc_sl(entry, side):
-    risk_pct = 0.005
+    risk_pct = 0.005  # 0,5 %
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
 
 def calc_tp(entry, sl, side):
@@ -21,11 +21,14 @@ def calc_tp(entry, sl, side):
     else:
         return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
-# === Formatierte Nachricht mit Symbol-abhängiger Präzision und korrektem Icon ===
+# === Nachricht formatieren mit korrektem Icon & Rundung ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
-    direction_icon = '📈' if side == 'long' else '📉'
-    direction_text = '🟢 *LONG*' if side == 'long' else '🔴 *SHORT*'
+    if side == 'long':
+        direction_text = '🟢 *LONG* 📈'
+    else:
+        direction_text = '🔴 *SHORT* 📉'
 
+    # Symbolabhängige Nachkommastellen
     if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
         digits = 2
     elif symbol in ["EURUSD", "GBPUSD"]:
@@ -36,7 +39,7 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     fmt = f"{{:.{digits}f}}"
 
     return f"""🔔 *RT-Trading VIP* 🔔  
-{direction_text} {direction_icon}
+{direction_text}
 
 📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
@@ -115,3 +118,4 @@ def webhook():
 # === Lokaler Teststart ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
