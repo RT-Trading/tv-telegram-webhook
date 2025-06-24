@@ -9,20 +9,17 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === SL: 0.7 %, TP1: 1.0 %, TP2: 1.8 %, Full TP: 2.8 % ===
+# === SL: 0.5 %, TP1: 1.0 %, TP2: 1.8 %, Full TP: 2.8 % ===
 def calc_sl(entry, side):
-    risk_pct = 0.007
+    risk_pct = 0.005  # 0.5 % SL
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
 
-def calc_tp(entry, side):
-    tp1_pct = 0.010
-    tp2_pct = 0.018
-    tp3_pct = 0.028
-
+def calc_tp(entry, sl, side):
+    risk = abs(entry - sl)
     if side == 'long':
-        return entry * (1 + tp1_pct), entry * (1 + tp2_pct), entry * (1 + tp3_pct)
+        return entry + 2 * risk, entry + 3.6 * risk, entry + 5.6 * risk
     else:
-        return entry * (1 - tp1_pct), entry * (1 - tp2_pct), entry * (1 - tp3_pct)
+        return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
 # === Formatierte Nachricht mit Symbol-abhängiger Präzision ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
@@ -37,7 +34,7 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 
     fmt = f"{{:.{digits}f}}"
 
-    return f"""🔔 *Test-Nachricht* 🔔  
+    return f"""🔔 *RT-Trading VIP* 🔔  
 {direction}
 
 📍 *Entry*: `{fmt.format(entry)}`  
@@ -102,7 +99,7 @@ def webhook():
             raise ValueError("❌ Ungültige Daten")
 
         sl = calc_sl(entry, side)
-        tp1, tp2, tp3 = calc_tp(entry, side)
+        tp1, tp2, tp3 = calc_tp(entry, sl, side)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
         send_to_telegram(msg)
