@@ -37,7 +37,7 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     decimals = get_decimals(symbol)
     fmt = f"{{:.{decimals}f}}"
 
-    return f"""🔔 *RT-Trading VIP TEST* 🔔  
+    return f"""🔔 *RT-Trading VIP* 🔔  
 {direction}
 
 📍 *Entry*: `{fmt.format(entry)}`  
@@ -117,3 +117,4 @@ def webhook():
 # === Lokaler Start ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
