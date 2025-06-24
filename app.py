@@ -9,9 +9,9 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === SL: 0,5 %, TP1: 1,0 %, TP2: 1,8 %, Full TP: 2,8 %
+# === SL: 0.5 %, TP1: 1.0 %, TP2: 1.8 %, Full TP: 2.8 %
 def calc_sl(entry, side):
-    risk_pct = 0.005  # 0,5 %
+    risk_pct = 0.005
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
 
 def calc_tp(entry, sl, side):
@@ -21,13 +21,8 @@ def calc_tp(entry, sl, side):
     else:
         return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
-# === Nachricht formatieren mit korrektem Icon & Rundung ===
+# === Nachricht formatieren ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
-    if side == 'long':
-        direction_text = '🟢 *LONG* 📊'
-    else:
-        direction_text = '🔴 *SHORT* 📊'
-
     # Symbolabhängige Nachkommastellen
     if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
         digits = 2
@@ -38,8 +33,14 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 
     fmt = f"{{:.{digits}f}}"
 
+    # Richtungsanzeige
+    if side == 'long':
+        direction = "🟢 *LONG* 📈"
+    else:
+        direction = "🔴 *SHORT* 📉"
+
     return f"""🔔 *RT-Trading VIP* 🔔  
-{direction_text}
+{direction}
 
 📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
@@ -50,7 +51,7 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
-🔁 *TP1 erreicht → Breakeven setzen*.
+🔁 TP1 erreicht → *Breakeven setzen*.
 """
 
 # === Telegram senden ===
@@ -59,7 +60,8 @@ def send_to_telegram(text):
     payload = {
         'chat_id': TELEGRAM_CHAT_ID,
         'text': text,
-        'parse_mode': 'Markdown'
+        'parse_mode': 'Markdown',
+        'disable_web_page_preview': True
     }
     r = requests.post(url, data=payload)
     if r.status_code != 200:
@@ -115,6 +117,6 @@ def webhook():
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
-# === Lokaler Teststart ===
+# === Lokaler Start ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
