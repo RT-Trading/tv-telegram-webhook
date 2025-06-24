@@ -24,9 +24,9 @@ def calc_tp(entry, sl, side):
 # === Nachricht formatieren mit korrektem Icon & Rundung ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     if side == 'long':
-        direction_text = '🟢 *LONG* 📉'
+        direction_text = '🟢 *LONG* 📊'
     else:
-        direction_text = '🔴 *SHORT* 📈'
+        direction_text = '🔴 *SHORT* 📊'
 
     # Symbolabhängige Nachkommastellen
     if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
@@ -44,9 +44,9 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
 
-🎯 *TP 1*: `{fmt.format(tp1)}`  
-🎯 *TP 2*: `{fmt.format(tp2)}`  
-🎯 *Full TP*: `{fmt.format(tp3)}`
+💶 *TP 1*: `{fmt.format(tp1)}`  
+💶 *TP 2*: `{fmt.format(tp2)}`  
+💶 *Full TP*: `{fmt.format(tp3)}`
 
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
