@@ -11,17 +11,20 @@ TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
 # === SL: 0.5 %, TP1: 1.0 %, TP2: 1.8 %, Full TP: 2.8 % ===
 def calc_sl(entry, side):
-    risk_pct = 0.005  # 0.5 % SL
-    return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
+    sl_pct = 0.005
+    return entry * (1 - sl_pct) if side == 'long' else entry * (1 + sl_pct)
 
-def calc_tp(entry, sl, side):
-    risk = abs(entry - sl)
+def calc_tp(entry, side):
+    tp1_pct = 0.010
+    tp2_pct = 0.018
+    tp3_pct = 0.028
+
     if side == 'long':
-        return entry + 2 * risk, entry + 3.6 * risk, entry + 5.6 * risk
+        return entry * (1 + tp1_pct), entry * (1 + tp2_pct), entry * (1 + tp3_pct)
     else:
-        return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
+        return entry * (1 - tp1_pct), entry * (1 - tp2_pct), entry * (1 - tp3_pct)
 
-# === Formatierte Nachricht mit Symbol-abhängiger Präzision ===
+# === Formatierte Nachricht ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     direction = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
 
@@ -30,23 +33,23 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     elif symbol in ["EURUSD", "GBPUSD"]:
         digits = 5
     else:
-        digits = 4  # fallback
+        digits = 4
 
     fmt = f"{{:.{digits}f}}"
 
-    return f"""🔔 *RT-Trading VIP* 🔔  
+    return f"""\ud83d\udd14 *RT-Trading VIP* \ud83d\udd14  
 {direction}
 
-📍 *Entry*: `{fmt.format(entry)}`  
-🛑 *SL*: `{fmt.format(sl)}`
+\ud83d\udccd *Entry*: `{fmt.format(entry)}`  
+\ud83d\uded1 *SL*: `{fmt.format(sl)}`
 
-🎯 *TP 1*: `{fmt.format(tp1)}`  
-🎯 *TP 2*: `{fmt.format(tp2)}`  
-🎯 *Full TP*: `{fmt.format(tp3)}`
+\ud83c\udfaf *TP 1*: `{fmt.format(tp1)}`  
+\ud83c\udfaf *TP 2*: `{fmt.format(tp2)}`  
+\ud83c\udfaf *Full TP*: `{fmt.format(tp3)}`
 
-⚠️ *Keine Finanzberatung!*  
-📌 Achtet auf *Money Management*!  
-🔁 *TP1 erreicht → Breakeven setzen*.
+\u26a0\ufe0f *Keine Finanzberatung!*  
+\ud83d\udccc Achtet auf *Money Management*!  
+\ud83d\udd01 *TP1 erreicht \u2192 Breakeven setzen*.
 """
 
 # === Telegram senden ===
@@ -59,7 +62,7 @@ def send_to_telegram(text):
     }
     r = requests.post(url, data=payload)
     if r.status_code != 200:
-        print("❌ Telegram-Fehler:", r.text)
+        print("\u274c Telegram-Fehler:", r.text)
         raise Exception("Telegram-Fehler")
 
 # === Trade speichern ===
@@ -89,27 +92,27 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
 def webhook():
     try:
         data = request.get_json(force=True)
-        print("📩 Empfangen:", data)
+        print("\ud83d\udce9 Empfangen:", data)
 
         entry = float(data.get("entry", 0))
         side = (data.get("side") or data.get("direction") or "").strip().lower()
         symbol = str(data.get("symbol", "")).strip().upper()
 
         if not entry or side not in ["long", "short"] or not symbol:
-            raise ValueError("❌ Ungültige Daten")
+            raise ValueError("\u274c Ung\u00fcltige Daten")
 
         sl = calc_sl(entry, side)
-        tp1, tp2, tp3 = calc_tp(entry, sl, side)
+        tp1, tp2, tp3 = calc_tp(entry, side)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
         send_to_telegram(msg)
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
-        print("✅ Gesendet:", symbol, side, entry)
-        return "✅ OK", 200
+        print("\u2705 Gesendet:", symbol, side, entry)
+        return "\u2705 OK", 200
 
     except Exception as e:
-        print("❌ Fehler:", str(e))
-        return f"❌ Fehler: {str(e)}", 400
+        print("\u274c Fehler:", str(e))
+        return f"\u274c Fehler: {str(e)}", 400
 
 # === Lokaler Teststart ===
 if __name__ == "__main__":
