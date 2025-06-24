@@ -77,40 +77,42 @@ def check_trades():
 
         # Treffererkennung
         hit = None
+        close_trade = False
+
         if side == "long":
             if price <= sl:
-                hit = "❌ SL erreicht"
+                hit = "❌ *SL erreicht*"
+                close_trade = True
             elif price >= tp3:
-                hit = "🏁 Full TP erreicht"
+                hit = "🏁 *Full TP erreicht*"
+                close_trade = True
             elif price >= tp2:
-                hit = "✅ TP2 erreicht"
+                hit = "✅ *TP2 erreicht*"
             elif price >= tp1:
-                hit = "✅ TP1 erreicht"
+                hit = "✅ *TP1 erreicht*"
+
         elif side == "short":
             if price >= sl:
-                hit = "❌ SL erreicht"
+                hit = "❌ *SL erreicht*"
+                close_trade = True
             elif price <= tp3:
-                hit = "🏁 Full TP erreicht"
+                hit = "🏁 *Full TP erreicht*"
+                close_trade = True
             elif price <= tp2:
-                hit = "✅ TP2 erreicht"
+                hit = "✅ *TP2 erreicht*"
             elif price <= tp1:
-                hit = "✅ TP1 erreicht"
+                hit = "✅ *TP1 erreicht*"
 
-        # Formatierung
         if hit:
-            price_fmt = f"{price:.2f}" if symbol not in ["EURUSD", "GBPUSD"] else f"{price:.5f}"
+            # Dynamische Formatierung je nach Symbol
+            digits = 5 if symbol in ["EURUSD", "GBPUSD"] else 2
+            fmt = f"{{:.{digits}f}}"
             msg = (
                 f"*{symbol}* | *{side.upper()}*\n"
                 f"{hit}\n"
-                f"📍 Entry: `{entry}`\n"
-                f"📉 Preis: `{price_fmt}`"
-            )
-            send_telegram(msg)
-            t["closed"] = True
+                f"📍 Entry: `{fmt.format(entry)}`\n"
+                f"�
 
-        updated.append(t)
-
-    save_trades(updated)
 
 
 if __name__ == "__main__":
