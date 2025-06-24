@@ -9,27 +9,23 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === SL und TP-Berechnung (% vom Entry) ===
+# === SL: 0.5 %, TP1: 1.0 %, TP2: 1.8 %, Full TP: 2.8 % ===
 def calc_sl(entry, side):
-    pct = 0.005  # 0.5 %
-    return entry * (1 - pct) if side == 'long' else entry * (1 + pct)
+    risk_pct = 0.005
+    return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
 
-def calc_tp(entry, side):
-    pct_tp1 = 0.010  # 1.0 %
-    pct_tp2 = 0.018  # 1.8 %
-    pct_tp3 = 0.028  # 2.8 %
-
+def calc_tp(entry, sl, side):
+    risk = abs(entry - sl)
     if side == 'long':
-        return entry * (1 + pct_tp1), entry * (1 + pct_tp2), entry * (1 + pct_tp3)
+        return entry + 2 * risk, entry + 3.6 * risk, entry + 5.6 * risk
     else:
-        return entry * (1 - pct_tp1), entry * (1 - pct_tp2), entry * (1 - pct_tp3)
+        return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
-# === Formatierte Nachricht mit Symbol-abhängiger Präzision ===
+# === Formatierte Nachricht (TP-Prozente ausgeblendet, Full TP angepasst) ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
-    direction_icon = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
+    direction = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
 
-    # Dezimalstellen nach Symbol
-    if symbol in ["BTCUSD", "NAS100", "XAUUSD", "GOLD"]:
+    if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
         digits = 2
     elif symbol in ["EURUSD", "GBPUSD"]:
         digits = 5
@@ -39,18 +35,18 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     fmt = f"{{:.{digits}f}}"
 
     return f"""🔔 *RT-Trading VIP* 🔔  
-{direction_icon}
+{direction}
 
-📍 *Entry*: `{fmt.format(entry)}`
+📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
 
-🎯 *TP 1*: `{fmt.format(tp1)}`
-🎯 *TP 2*: `{fmt.format(tp2)}`
+🎯 *TP 1*: `{fmt.format(tp1)}`  
+🎯 *TP 2*: `{fmt.format(tp2)}`  
 🎯 *Full TP*: `{fmt.format(tp3)}`
 
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
-🔁 TP1 erreicht → Breakeven setzen.
+🔁 *TP1 erreicht → Breakeven setzen*.
 """
 
 # === Telegram senden ===
@@ -63,7 +59,7 @@ def send_to_telegram(text):
     }
     r = requests.post(url, data=payload)
     if r.status_code != 200:
-        print("❌ Telegram-Fehler:", r.text)
+        print("Telegram-Fehler:", r.text)
         raise Exception("Telegram-Fehler")
 
 # === Trade speichern ===
@@ -93,28 +89,29 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
 def webhook():
     try:
         data = request.get_json(force=True)
-        print("📩 Empfangen:", data)
+        print("Empfangen:", data)  # Ohne Emojis → UTF-8 sicher
 
         entry = float(data.get("entry", 0))
         side = (data.get("side") or data.get("direction") or "").strip().lower()
         symbol = str(data.get("symbol", "")).strip().upper()
 
         if not entry or side not in ["long", "short"] or not symbol:
-            raise ValueError("❌ Ungültige Daten")
+            raise ValueError("Ungültige Daten")
 
         sl = calc_sl(entry, side)
-        tp1, tp2, tp3 = calc_tp(entry, side)
+        tp1, tp2, tp3 = calc_tp(entry, sl, side)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
         send_to_telegram(msg)
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
-        print("✅ Gesendet:", symbol, side, entry)
+        print("Gesendet:", symbol, side.upper(), f"Entry: {entry}")
         return "✅ OK", 200
 
     except Exception as e:
-        print("❌ Fehler:", str(e))
+        print("Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
-# === Lokaler Start ===
+# === Lokaler Teststart ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
