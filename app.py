@@ -37,7 +37,7 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     decimals = get_decimals(symbol)
     fmt = f"{{:.{decimals}f}}"
 
-    return f"""🔔 *RT-Trading VIP* 🔔  
+    return f"""🔔 *RT-Trading VIP TEST* 🔔  
 {direction}
 
 📍 *Entry*: `{fmt.format(entry)}`  
