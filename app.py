@@ -21,18 +21,21 @@ def calc_tp(entry, sl, side):
     else:
         return entry - 3 * risk, entry - 5 * risk, entry - 7 * risk
 
-# === Formatierte Nachricht mit Symbol-abhängiger Präzision ===
+# === Dezimalstellen abhängig vom Symbol bestimmen ===
+def get_decimals(symbol):
+    symbol = symbol.upper()
+    if symbol in ["BTCUSD", "XAUUSD", "GOLD", "NAS100"]:
+        return 2
+    elif symbol in ["EURUSD", "GBPUSD", "USDJPY"]:
+        return 5
+    else:
+        return 3  # Standard fallback
+
+# === Nachricht formatieren ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     direction = '🟢 *LONG* 📈' if side == 'long' else '🔴 *SHORT* 📉'
-
-    if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
-        digits = 2
-    elif symbol in ["EURUSD", "GBPUSD"]:
-        digits = 5
-    else:
-        digits = 4  # fallback
-
-    fmt = f"{{:.{digits}f}}"
+    decimals = get_decimals(symbol)
+    fmt = f"{{:.{decimals}f}}"
 
     return f"""🔔 *Test-Nachricht* 🔔  
 {direction}
@@ -40,9 +43,9 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
 
-🎯 *TP 1 (2.1%)*: `{fmt.format(tp1)}`  
-🎯 *TP 2 (3.5%)*: `{fmt.format(tp2)}`  
-🎯 *TP 3 (4.9%)*: `{fmt.format(tp3)}`
+🎯 *TP 1 *: `{fmt.format(tp1)}`  
+🎯 *TP 2 *: `{fmt.format(tp2)}`  
+🎯 *TP 3 *: `{fmt.format(tp3)}`
 
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
@@ -57,9 +60,9 @@ def send_to_telegram(text):
         'text': text,
         'parse_mode': 'Markdown'
     }
-    r = requests.post(url, data=payload)
-    if r.status_code != 200:
-        print("❌ Telegram-Fehler:", r.text)
+    response = requests.post(url, data=payload)
+    if response.status_code != 200:
+        print("❌ Telegram-Fehler:", response.text)
         raise Exception("Telegram-Fehler")
 
 # === Trade speichern ===
@@ -114,3 +117,4 @@ def webhook():
 # === Lokaler Teststart ===
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
