@@ -54,14 +54,19 @@ def save_trades(trades):
 
 def check_trades():
     trades = load_trades()
-
     updated = []
+
     for t in trades:
         if t["closed"]:
             updated.append(t)
             continue
 
-        symbol = t["symbol"]
+        symbol = t.get("symbol", "").upper()
+        entry = t["entry"]
+        sl = t["sl"]
+        side = t["side"]
+        tp1, tp2, tp3 = t["tp1"], t["tp2"], t["tp3"]
+
         price = get_price(symbol)
         print(f"🔍 {symbol} Preis: {price}")
 
@@ -70,38 +75,43 @@ def check_trades():
             updated.append(t)
             continue
 
-        entry = t["entry"]
-        sl = t["sl"]
-        side = t["side"]
+        # Treffererkennung
         hit = None
-
         if side == "long":
             if price <= sl:
                 hit = "❌ SL erreicht"
-            elif price >= t["tp3"]:
-                hit = "🏁 TP3 erreicht"
-            elif price >= t["tp2"]:
+            elif price >= tp3:
+                hit = "🏁 Full TP erreicht"
+            elif price >= tp2:
                 hit = "✅ TP2 erreicht"
-            elif price >= t["tp1"]:
+            elif price >= tp1:
                 hit = "✅ TP1 erreicht"
         elif side == "short":
             if price >= sl:
                 hit = "❌ SL erreicht"
-            elif price <= t["tp3"]:
-                hit = "🏁 TP3 erreicht"
-            elif price <= t["tp2"]:
+            elif price <= tp3:
+                hit = "🏁 Full TP erreicht"
+            elif price <= tp2:
                 hit = "✅ TP2 erreicht"
-            elif price <= t["tp1"]:
+            elif price <= tp1:
                 hit = "✅ TP1 erreicht"
 
+        # Formatierung
         if hit:
-            msg = f"*{symbol}* | {side.upper()} | Entry: {entry}\n{hit} bei Preis: {price}"
+            price_fmt = f"{price:.2f}" if symbol not in ["EURUSD", "GBPUSD"] else f"{price:.5f}"
+            msg = (
+                f"*{symbol}* | *{side.upper()}*\n"
+                f"{hit}\n"
+                f"📍 Entry: `{entry}`\n"
+                f"📉 Preis: `{price_fmt}`"
+            )
             send_telegram(msg)
             t["closed"] = True
 
         updated.append(t)
 
     save_trades(updated)
+
 
 if __name__ == "__main__":
     print("🟢 Monitor gestartet…")
