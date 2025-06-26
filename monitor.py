@@ -154,7 +154,8 @@ def check_trades():
 
 if __name__ == "__main__":
     print("🟢 Monitor gestartet…")
-    send_telegram("📡 *Bot gestartet!*")
+    # send_telegram("📢 Bot gestartet!")  # Nur aktivieren, wenn gewünscht
+
 
     while True:
         try:
