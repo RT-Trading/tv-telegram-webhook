@@ -55,16 +55,18 @@ def send_telegram(msg, retry=True):
 
 def log_error(error_text):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open("errors.log", "a") as f:
-        f.write(f"[{now}] {error_text}\n")
+    print(f"[{now}] ❌ Fehler: {error_text}")
 
 
 def load_trades():
     if not os.path.exists("trades.json"):
+        print("⚠️ Datei trades.json nicht gefunden.")
         return []
     try:
         with open("trades.json", "r") as f:
-            return json.load(f)
+            trades = json.load(f)
+            print(f"📦 {len(trades)} Trades geladen.")
+            return trades
     except Exception as e:
         log_error(f"Fehler beim Laden von trades.json: {e}")
         return []
@@ -152,9 +154,12 @@ def check_trades():
 
 if __name__ == "__main__":
     print("🟢 Monitor gestartet…")
+    send_telegram("📡 *Bot gestartet!*")
+
     while True:
         try:
             check_trades()
         except Exception as e:
             log_error(f"Hauptfehler: {e}")
         time.sleep(60)
+
