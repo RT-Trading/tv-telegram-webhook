@@ -11,14 +11,25 @@ ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
 def get_price(symbol):
     symbol = symbol.upper()
 
+    # 1. Spezialfall: BTCUSD → CoinGecko
     if symbol == "BTCUSD":
         url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
         try:
-            r = requests.get(url)
+            r = requests.get(url, timeout=10)
             return float(r.json().get("bitcoin", {}).get("usd", 0))
         except:
-            return 0
+            return 0.0
 
+    # 2. Spezialfall: XAUUSD → Metals.Live
+    if symbol == "XAUUSD":
+        try:
+            r = requests.get("https://api.metals.live/v1/spot", timeout=10)
+            data = r.json()[0]
+            return float(data.get("gold", 0))
+        except:
+            return 0.0
+
+    # 3. Standard: FX → AlphaVantage
     from_curr = symbol[:3]
     to_curr = symbol[3:]
 
@@ -27,12 +38,14 @@ def get_price(symbol):
         f"?function=CURRENCY_EXCHANGE_RATE"
         f"&from_currency={from_curr}&to_currency={to_curr}&apikey={ALPHA_API_KEY}"
     )
+
     try:
-        r = requests.get(url)
+        r = requests.get(url, timeout=10)
         data = r.json().get("Realtime Currency Exchange Rate", {})
         return float(data.get("5. Exchange Rate", 0))
     except:
-        return 0
+        return 0.0
+
 
 
 def send_telegram(msg, retry=True):
