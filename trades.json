@@ -6,6 +6,11 @@
     "sl": 3335.00,
     "tp1": 3329.00,
     "tp2": 3328.00,
-    "tp3": 3327.00
+    "tp3": 3327.00,
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "tp3_hit": false,
+    "sl_hit": false,
+    "closed": false
   }
 ]
