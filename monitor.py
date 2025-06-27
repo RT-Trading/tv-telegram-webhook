@@ -41,9 +41,11 @@ def get_price(symbol):
         try:
             url = f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd"
             r = requests.get(url, timeout=10)
-            return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
-        except:
-            return 0
+            preis = float(r.json()[COINGECKO_MAP[symbol]]["usd"])
+            print(f"📦 Preis von CoinGecko: {preis}")
+            return preis
+        except Exception as e:
+            print(f"⚠️ CoinGecko-Fehler: {e}")
 
     # === AlphaVantage ===
     if symbol in FOREX_SYMBOLS or symbol in ALPHA_MAP:
@@ -60,9 +62,10 @@ def get_price(symbol):
                 data = r.json().get("Realtime Currency Exchange Rate", {})
                 preis = float(data.get("5. Exchange Rate", 0))
                 if preis > 0:
+                    print(f"📦 Preis von AlphaVantage (Forex): {preis}")
                     return preis
-            except:
-                pass
+            except Exception as e:
+                print(f"⚠️ AlphaVantage Forex-Fehler: {e}")
         else:
             try:
                 r = requests.get(
@@ -76,11 +79,12 @@ def get_price(symbol):
                 latest = list(ts.values())[0] if ts else {}
                 preis = float(latest.get("4. close", 0))
                 if preis > 0:
+                    print(f"📦 Preis von AlphaVantage (Index/Rohstoff): {preis}")
                     return preis
-            except:
-                pass
+            except Exception as e:
+                print(f"⚠️ AlphaVantage Index-Fehler: {e}")
 
-    # === Backup über METALS-API nur für Gold/Silber ===
+    # === MetalsAPI nur für Gold/Silber ===
     if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
         METALS_API_KEY = os.environ.get("METALS_API_KEY")
         metal_code = "XAU" if "XAU" in symbol else "XAG"
@@ -92,13 +96,13 @@ def get_price(symbol):
             )
             data = r.json()
             preis = 1 / float(data["rates"][metal_code])
+            print(f"📦 Preis von MetalsAPI: {preis}")
             return preis
-        except:
-            return 0
+        except Exception as e:
+            print(f"⚠️ MetalsAPI-Fehler: {e}")
 
+    print("❌ Keine Datenquelle erfolgreich")
     return 0
-
-
 
 
 def send_telegram(msg, retry=True):
