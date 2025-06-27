@@ -88,6 +88,10 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
         "tp2": tp2,
         "tp3": tp3,
         "side": side,
+        "tp1_hit": False,
+        "tp2_hit": False,
+        "tp3_hit": False,
+        "sl_hit": False,
         "closed": False
     }
     try:
@@ -99,6 +103,7 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
     trades.append(trade)
     with open("trades.json", "w") as f:
         json.dump(trades, f, indent=2)
+
 
 # === Webhook Endpoint ===
 @app.route('/webhook', methods=['POST'])
