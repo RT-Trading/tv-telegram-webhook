@@ -11,25 +11,25 @@ ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
 def get_price(symbol):
     symbol = symbol.upper()
 
-    # 1. Spezialfall: BTCUSD → CoinGecko
+    # Bitcoin
     if symbol == "BTCUSD":
         url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
         try:
-            r = requests.get(url, timeout=10)
+            r = requests.get(url)
             return float(r.json().get("bitcoin", {}).get("usd", 0))
         except:
-            return 0.0
+            return 0
 
-    # 2. Spezialfall: XAUUSD → Metals.Live
+    # Gold
     if symbol == "XAUUSD":
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=gold&vs_currencies=usd"
         try:
-            r = requests.get("https://api.metals.live/v1/spot", timeout=10)
-            data = r.json()[0]
-            return float(data.get("gold", 0))
+            r = requests.get(url)
+            return float(r.json().get("gold", {}).get("usd", 0))
         except:
-            return 0.0
+            return 0
 
-    # 3. Standard: FX → AlphaVantage
+    # Standard-Forex (via Alpha Vantage)
     from_curr = symbol[:3]
     to_curr = symbol[3:]
 
@@ -38,15 +38,12 @@ def get_price(symbol):
         f"?function=CURRENCY_EXCHANGE_RATE"
         f"&from_currency={from_curr}&to_currency={to_curr}&apikey={ALPHA_API_KEY}"
     )
-
     try:
-        r = requests.get(url, timeout=10)
+        r = requests.get(url)
         data = r.json().get("Realtime Currency Exchange Rate", {})
         return float(data.get("5. Exchange Rate", 0))
     except:
-        return 0.0
-
-
+        return 0
 
 def send_telegram(msg, retry=True):
     try:
@@ -58,32 +55,27 @@ def send_telegram(msg, retry=True):
         )
         if res.status_code != 200:
             raise Exception(f"Status {res.status_code}: {res.text}")
-        time.sleep(1)  # Anti-Rate-Limit
+        time.sleep(1)
     except Exception as e:
         log_error(f"Telegram Fehler: {e}")
         if retry:
             print("🔁 Versuche erneut zu senden…")
             send_telegram(msg, retry=False)
 
-
 def log_error(error_text):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now}] ❌ Fehler: {error_text}")
-
+    with open("errors.log", "a") as f:
+        f.write(f"[{now}] {error_text}\n")
 
 def load_trades():
     if not os.path.exists("trades.json"):
-        print("⚠️ Datei trades.json nicht gefunden.")
         return []
     try:
         with open("trades.json", "r") as f:
-            trades = json.load(f)
-            print(f"📦 {len(trades)} Trades geladen.")
-            return trades
+            return json.load(f)
     except Exception as e:
         log_error(f"Fehler beim Laden von trades.json: {e}")
         return []
-
 
 def save_trades(trades):
     try:
@@ -91,7 +83,6 @@ def save_trades(trades):
             json.dump(trades, f, indent=2)
     except Exception as e:
         log_error(f"Fehler beim Speichern von trades.json: {e}")
-
 
 def check_trades():
     trades = load_trades()
@@ -164,16 +155,10 @@ def check_trades():
 
     save_trades(updated)
 
-
 if __name__ == "__main__":
-    print("🟢 Monitor gestartet…")
-    # send_telegram("📢 Bot gestartet!")  # Nur aktivieren, wenn gewünscht
-
-
     while True:
         try:
             check_trades()
         except Exception as e:
             log_error(f"Hauptfehler: {e}")
         time.sleep(60)
-
