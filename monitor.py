@@ -9,70 +9,96 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
 
 def get_price(symbol):
+    import requests
+
     symbol = symbol.upper()
+    COINGECKO_MAP = {
+        "BTCUSD": "bitcoin",
+        "ETHUSD": "ethereum",
+        "XRPUSD": "ripple",
+        "DOGEUSD": "dogecoin"
+    }
 
-    # ✅ CoinGecko: BTCUSD, DOGEUSD, ETHUSD, XRPUSD usw.
-    if symbol == "BTCUSD":
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-    elif symbol == "DOGEUSD":
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=dogecoin&vs_currencies=usd"
-    elif symbol == "ETHUSD":
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
-    elif symbol == "XRPUSD":
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd"
-    else:
-        # ✅ AlphaVantage: Forex, Gold, Indizes wie NAS100, GER40, US30
-        aliases = {
-            "NAS100": "NDX",
-            "GER40": "GDAXI",
-            "US30": "DJI",
-            "US500": "SPX",
-            "SILVER": "XAGUSD",
-            "GOLD": "XAUUSD"
-        }
+    ALPHA_MAP = {
+        "XAUUSD": "XAUUSD",
+        "SILVER": "XAGUSD",
+        "NAS100": "NDX",
+        "GER40": "GDAXI",
+        "US30": "DJI",
+        "US500": "SPX",
+        "VIX": "VIX",
+        "USDOLLAR": "DX-Y.NYB",
+        "GC1!": "XAUUSD"
+    }
 
-        # Symbol umwandeln
-        av_symbol = aliases.get(symbol, symbol)
+    FOREX_SYMBOLS = {
+        "GBPJPY", "GBPUSD", "EURUSD", "EURJPY", "USDCHF",
+        "NZDCHF", "EURGBP", "USDCAD", "AUDJPY", "CHFJPY", "SOLEUR"
+    }
 
-        # Gold, Forex usw.
-        if av_symbol in ["XAUUSD", "XAGUSD"] or len(av_symbol) == 6:
+    # === CoinGecko ===
+    if symbol in COINGECKO_MAP:
+        try:
+            url = f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd"
+            r = requests.get(url, timeout=10)
+            return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
+        except:
+            return 0
+
+    # === AlphaVantage ===
+    if symbol in FOREX_SYMBOLS or symbol in ALPHA_MAP:
+        av_symbol = ALPHA_MAP.get(symbol, symbol)
+        if len(av_symbol) == 6:
             from_curr = av_symbol[:3]
             to_curr = av_symbol[3:]
-            url = (
-                f"https://www.alphavantage.co/query"
-                f"?function=CURRENCY_EXCHANGE_RATE"
-                f"&from_currency={from_curr}&to_currency={to_curr}"
-                f"&apikey={ALPHA_API_KEY}"
-            )
-        else:
-            # Indizes: TIME_SERIES_INTRADAY (z. B. NASDAQ 100)
-            url = (
-                f"https://www.alphavantage.co/query"
-                f"?function=TIME_SERIES_INTRADAY"
-                f"&symbol={av_symbol}"
-                f"&interval=5min"
-                f"&apikey={ALPHA_API_KEY}"
-            )
             try:
-                r = requests.get(url)
-                data = r.json().get("Time Series (5min)", {})
-                if not data:
-                    return 0
-                latest = list(data.values())[0]
-                return float(latest["4. close"])
+                r = requests.get(
+                    f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE"
+                    f"&from_currency={from_curr}&to_currency={to_curr}&apikey={ALPHA_API_KEY}",
+                    timeout=10
+                )
+                data = r.json().get("Realtime Currency Exchange Rate", {})
+                preis = float(data.get("5. Exchange Rate", 0))
+                if preis > 0:
+                    return preis
             except:
-                return 0
-
-    try:
-        r = requests.get(url)
-        if "coingecko" in url:
-            coin = url.split("ids=")[1].split("&")[0]
-            return float(r.json().get(coin, {}).get("usd", 0))
+                pass
         else:
-            data = r.json().get("Realtime Currency Exchange Rate", {})
-            return float(data.get("5. Exchange Rate", 0))
-    except:
-        return 0
+            try:
+                r = requests.get(
+                    f"https://www.alphavantage.co/query"
+                    f"?function=TIME_SERIES_INTRADAY"
+                    f"&symbol={av_symbol}"
+                    f"&interval=5min&apikey={ALPHA_API_KEY}",
+                    timeout=10
+                )
+                ts = r.json().get("Time Series (5min)", {})
+                latest = list(ts.values())[0] if ts else {}
+                preis = float(latest.get("4. close", 0))
+                if preis > 0:
+                    return preis
+            except:
+                pass
+
+    # === Backup über METALS-API nur für Gold/Silber ===
+    if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
+        METALS_API_KEY = os.environ.get("METALS_API_KEY")
+        metal_code = "XAU" if "XAU" in symbol else "XAG"
+        try:
+            r = requests.get(
+                f"https://metals-api.com/api/latest"
+                f"?access_key={METALS_API_KEY}&base=USD&symbols={metal_code}",
+                timeout=10
+            )
+            data = r.json()
+            preis = 1 / float(data["rates"][metal_code])
+            return preis
+        except:
+            return 0
+
+    return 0
+
+
 
 
 def send_telegram(msg, retry=True):
