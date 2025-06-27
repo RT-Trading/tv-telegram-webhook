@@ -11,7 +11,6 @@ ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
 def get_price(symbol):
     symbol = symbol.upper()
 
-    # Bitcoin
     if symbol == "BTCUSD":
         url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
         try:
@@ -20,7 +19,6 @@ def get_price(symbol):
         except:
             return 0
 
-    # Gold
     if symbol == "XAUUSD":
         url = "https://api.coingecko.com/api/v3/simple/price?ids=gold&vs_currencies=usd"
         try:
@@ -29,10 +27,8 @@ def get_price(symbol):
         except:
             return 0
 
-    # Standard-Forex (via Alpha Vantage)
     from_curr = symbol[:3]
     to_curr = symbol[3:]
-
     url = (
         f"https://www.alphavantage.co/query"
         f"?function=CURRENCY_EXCHANGE_RATE"
@@ -93,6 +89,11 @@ def check_trades():
             updated.append(t)
             continue
 
+        t.setdefault("tp1_hit", False)
+        t.setdefault("tp2_hit", False)
+        t.setdefault("tp3_hit", False)
+        t.setdefault("sl_hit", False)
+
         symbol = t.get("symbol", "").upper()
         entry = t.get("entry")
         sl = t.get("sl")
@@ -107,49 +108,54 @@ def check_trades():
             updated.append(t)
             continue
 
-        hit = None
-        close_trade = False
+        digits = 5 if symbol in ["EURUSD", "GBPUSD"] else 2
+        fmt = f"{{:.{digits}f}}"
 
         if side == "long":
-            if price <= sl:
-                hit = "❌ *SL erreicht*"
-                close_trade = True
-            elif price >= tp3:
-                hit = "🏁 *Full TP erreicht*"
-                close_trade = True
-            elif price >= tp2:
-                hit = "✅ *TP2 erreicht*"
-            elif price >= tp1:
-                hit = "✅ *TP1 erreicht*"
+            if price <= sl and not t["sl_hit"]:
+                msg = (
+                    f"*{symbol}* | *{side.upper()}*\n"
+                    f"❌ *SL erreicht*\n"
+                    f"📍 Entry: `{fmt.format(entry)}`\n"
+                    f"🛑 SL: `{fmt.format(sl)}`\n"
+                    f"💰 Aktueller Preis: `{fmt.format(price)}`"
+                )
+                send_telegram(msg)
+                t["sl_hit"] = True
+                t["closed"] = True
+            elif price >= tp1 and not t["tp1_hit"]:
+                send_telegram(f"*{symbol}* | *{side.upper()}*\n✅ *TP1 erreicht*\n🎯 TP1: `{fmt.format(tp1)}`\n💰 Preis: `{fmt.format(price)}`")
+                t["tp1_hit"] = True
+            elif price >= tp2 and not t["tp2_hit"]:
+                send_telegram(f"*{symbol}* | *{side.upper()}*\n✅ *TP2 erreicht*\n🎯 TP2: `{fmt.format(tp2)}`\n💰 Preis: `{fmt.format(price)}`")
+                t["tp2_hit"] = True
+            elif price >= tp3 and not t["tp3_hit"]:
+                send_telegram(f"*{symbol}* | *{side.upper()}*\n🏁 *Full TP erreicht – Glückwunsch!*\n🏁 TP3: `{fmt.format(tp3)}`\n💰 Preis: `{fmt.format(price)}`")
+                t["tp3_hit"] = True
+                t["closed"] = True
+
         elif side == "short":
-            if price >= sl:
-                hit = "❌ *SL erreicht*"
-                close_trade = True
-            elif price <= tp3:
-                hit = "🏁 *Full TP erreicht*"
-                close_trade = True
-            elif price <= tp2:
-                hit = "✅ *TP2 erreicht*"
-            elif price <= tp1:
-                hit = "✅ *TP1 erreicht*"
-
-        if hit:
-            digits = 5 if symbol in ["EURUSD", "GBPUSD"] else 2
-            fmt = f"{{:.{digits}f}}"
-            msg = (
-                f"*{symbol}* | *{side.upper()}*\n"
-                f"{hit}\n"
-                f"📍 Entry: `{fmt.format(entry)}`\n"
-                f"🛑 SL: `{fmt.format(sl)}`\n"
-                f"🎯 TP1: `{fmt.format(tp1)}`\n"
-                f"🎯 TP2: `{fmt.format(tp2)}`\n"
-                f"🏁 Full TP: `{fmt.format(tp3)}`\n"
-                f"💰 Aktueller Preis: `{fmt.format(price)}`"
-            )
-            send_telegram(msg)
-
-        if close_trade:
-            t["closed"] = True
+            if price >= sl and not t["sl_hit"]:
+                msg = (
+                    f"*{symbol}* | *{side.upper()}*\n"
+                    f"❌ *SL erreicht*\n"
+                    f"📍 Entry: `{fmt.format(entry)}`\n"
+                    f"🛑 SL: `{fmt.format(sl)}`\n"
+                    f"💰 Aktueller Preis: `{fmt.format(price)}`"
+                )
+                send_telegram(msg)
+                t["sl_hit"] = True
+                t["closed"] = True
+            elif price <= tp1 and not t["tp1_hit"]:
+                send_telegram(f"*{symbol}* | *{side.upper()}*\n✅ *TP1 erreicht*\n🎯 TP1: `{fmt.format(tp1)}`\n💰 Preis: `{fmt.format(price)}`")
+                t["tp1_hit"] = True
+            elif price <= tp2 and not t["tp2_hit"]:
+                send_telegram(f"*{symbol}* | *{side.upper()}*\n✅ *TP2 erreicht*\n🎯 TP2: `{fmt.format(tp2)}`\n💰 Preis: `{fmt.format(price)}`")
+                t["tp2_hit"] = True
+            elif price <= tp3 and not t["tp3_hit"]:
+                send_telegram(f"*{symbol}* | *{side.upper()}*\n🏁 *Full TP erreicht – Glückwunsch!*\n🏁 TP3: `{fmt.format(tp3)}`\n💰 Preis: `{fmt.format(price)}`")
+                t["tp3_hit"] = True
+                t["closed"] = True
 
         updated.append(t)
 
