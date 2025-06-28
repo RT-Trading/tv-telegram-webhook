@@ -9,6 +9,7 @@ print("🚀 Monitor gestartet")
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
+METALS_API_KEY = os.environ.get("METALS_API_KEY")
 
 def get_price(symbol):
     symbol = symbol.upper()
@@ -67,13 +68,13 @@ def get_price(symbol):
                 return preis
 
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
-            METALS_API_KEY = os.environ.get("METALS_API_KEY")
             metal_code = "XAU" if "XAU" in symbol else "XAG"
             r = requests.get(
-                f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base=USD&symbols={metal_code}",
+                f"https://metals-api.com/api/latest"
+                f"?access_key={METALS_API_KEY}&base={metal_code}&symbols=USD",
                 timeout=10
             )
-            preis = float(r.json()["rates"][metal_code])
+            preis = float(r.json()["rates"]["USD"])
             print(f"📦 Preis von MetalsAPI: {preis}")
             return preis
 
