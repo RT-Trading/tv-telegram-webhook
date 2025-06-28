@@ -4,6 +4,8 @@ import requests
 import os
 from datetime import datetime
 
+print("🚀 Monitor gestartet")
+
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
@@ -36,7 +38,6 @@ def get_price(symbol):
         "NZDCHF", "EURGBP", "USDCAD", "AUDJPY", "CHFJPY", "SOLEUR"
     }
 
-    # === CoinGecko ===
     if symbol in COINGECKO_MAP:
         try:
             url = f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd"
@@ -47,7 +48,6 @@ def get_price(symbol):
         except Exception as e:
             print(f"⚠️ CoinGecko-Fehler: {e}")
 
-    # === AlphaVantage ===
     if symbol in FOREX_SYMBOLS or symbol in ALPHA_MAP:
         av_symbol = ALPHA_MAP.get(symbol, symbol)
         if len(av_symbol) == 6:
@@ -71,8 +71,7 @@ def get_price(symbol):
                 r = requests.get(
                     f"https://www.alphavantage.co/query"
                     f"?function=TIME_SERIES_INTRADAY"
-                    f"&symbol={av_symbol}"
-                    f"&interval=5min&apikey={ALPHA_API_KEY}",
+                    f"&symbol={av_symbol}&interval=5min&apikey={ALPHA_API_KEY}",
                     timeout=10
                 )
                 ts = r.json().get("Time Series (5min)", {})
@@ -84,7 +83,6 @@ def get_price(symbol):
             except Exception as e:
                 print(f"⚠️ AlphaVantage Index-Fehler: {e}")
 
-    # === MetalsAPI nur für Gold/Silber ===
     if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
         METALS_API_KEY = os.environ.get("METALS_API_KEY")
         metal_code = "XAU" if "XAU" in symbol else "XAG"
@@ -103,7 +101,6 @@ def get_price(symbol):
 
     print("❌ Keine Datenquelle erfolgreich")
     return 0
-
 
 def send_telegram(msg, retry=True):
     try:
@@ -159,7 +156,6 @@ def check_trades():
         side = t.get("side")
         tp1, tp2, tp3 = t.get("tp1"), t.get("tp2"), t.get("tp3")
 
-        # Fortschritts-Flags initialisieren
         t.setdefault("tp1_hit", False)
         t.setdefault("tp2_hit", False)
         t.setdefault("tp3_hit", False)
@@ -173,50 +169,39 @@ def check_trades():
             updated.append(t)
             continue
 
-        digits = 5 if symbol in ["EURUSD", "GBPUSD"] else 2
-        fmt = f"{{:.{digits}f}}"
-
-        def format_message(title, icon):
-            return (
-                f"*{symbol}* | *{side.upper()}*\n"
-                f"{icon} {title}\n"
-                f"🎯 TP1: `{fmt.format(tp1)}`\n"
-                f"🎯 TP2: `{fmt.format(tp2)}`\n"
-                f"🏁 Full TP: `{fmt.format(tp3)}`\n"
-                f"💰 Preis: `{fmt.format(price)}`"
-            )
+        def alert(msg): send_telegram(f"*{symbol}* | *{side.upper()}*\n{msg}\n💰 Preis: `{price:.2f}`")
 
         if side == "long":
             if not t["sl_hit"] and price <= sl:
                 t["sl_hit"] = True
-                send_telegram(format_message("❌ SL erreicht", "❌"))
+                alert("❌ *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
                 t["closed"] = True
             elif not t["tp3_hit"] and price >= tp3:
                 t["tp3_hit"] = True
-                send_telegram(format_message("🏁 Full TP erreicht 🎉", "🏁"))
+                alert("🎉 *Full TP erreicht – Glückwunsch!*")
                 t["closed"] = True
             elif not t["tp2_hit"] and price >= tp2:
                 t["tp2_hit"] = True
-                send_telegram(format_message("✅ TP2 erreicht", "✅"))
+                alert("📈 *TP2 erreicht – wir machen uns auf den Weg zum Full TP!*")
             elif not t["tp1_hit"] and price >= tp1:
                 t["tp1_hit"] = True
-                send_telegram(format_message("✅ TP1 erreicht", "✅"))
+                alert("🎯 *TP1 erreicht – spätestens jetzt BE setzen oder Trade managen.*")
 
         elif side == "short":
             if not t["sl_hit"] and price >= sl:
                 t["sl_hit"] = True
-                send_telegram(format_message("❌ SL erreicht", "❌"))
+                alert("❌ *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
                 t["closed"] = True
             elif not t["tp3_hit"] and price <= tp3:
                 t["tp3_hit"] = True
-                send_telegram(format_message("🏁 Full TP erreicht 🎉", "🏁"))
+                alert("🎉 *Full TP erreicht – Glückwunsch!*")
                 t["closed"] = True
             elif not t["tp2_hit"] and price <= tp2:
                 t["tp2_hit"] = True
-                send_telegram(format_message("✅ TP2 erreicht", "✅"))
+                alert("📈 *TP2 erreicht – wir machen uns auf den Weg zum Full TP!*")
             elif not t["tp1_hit"] and price <= tp1:
                 t["tp1_hit"] = True
-                send_telegram(format_message("✅ TP1 erreicht", "✅"))
+                alert("🎯 *TP1 erreicht – spätestens jetzt BE setzen oder Trade managen.*")
 
         updated.append(t)
 
