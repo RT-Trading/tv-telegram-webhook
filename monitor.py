@@ -40,7 +40,9 @@ def get_price(symbol):
         if symbol in COINGECKO_MAP:
             url = f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd"
             r = requests.get(url, timeout=10)
-            return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
+            preis = float(r.json()[COINGECKO_MAP[symbol]]["usd"])
+            print(f"📦 Preis von CoinGecko: {preis}")
+            return preis
 
         if symbol in FOREX_SYMBOLS or symbol in ALPHA_MAP:
             av_symbol = ALPHA_MAP.get(symbol, symbol)
@@ -50,7 +52,9 @@ def get_price(symbol):
                     f"&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}",
                     timeout=10
                 )
-                return float(r.json()["Realtime Currency Exchange Rate"]["5. Exchange Rate"])
+                preis = float(r.json()["Realtime Currency Exchange Rate"]["5. Exchange Rate"])
+                print(f"📦 Preis von AlphaVantage: {preis}")
+                return preis
             else:
                 r = requests.get(
                     f"https://www.alphavantage.co/query"
@@ -58,7 +62,9 @@ def get_price(symbol):
                     timeout=10
                 )
                 ts = r.json().get("Time Series (5min)", {})
-                return float(list(ts.values())[0]["4. close"])
+                preis = float(list(ts.values())[0]["4. close"])
+                print(f"📦 Preis von AlphaVantage (Index): {preis}")
+                return preis
 
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             METALS_API_KEY = os.environ.get("METALS_API_KEY")
@@ -67,7 +73,10 @@ def get_price(symbol):
                 f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base=USD&symbols={metal_code}",
                 timeout=10
             )
-            return 1 / float(r.json()["rates"][metal_code])
+            preis = float(r.json()["rates"][metal_code])
+            print(f"📦 Preis von MetalsAPI: {preis}")
+            return preis
+
     except Exception as e:
         log_error(f"Preisabruf Fehler für {symbol}: {e}")
 
@@ -144,13 +153,13 @@ def check_trades():
                 t["sl_hit"] = True
                 alert("❌ *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
                 t["closed"] = True
-            if not t["tp1_hit"] and price >= tp1:
+            elif not t["tp1_hit"] and price >= tp1:
                 t["tp1_hit"] = True
                 alert("🎯 *TP1 erreicht – spätestens jetzt BE setzen oder Trade managen.*")
-            if t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
+            elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
                 t["tp2_hit"] = True
                 alert("📈 *TP2 erreicht – wir machen uns auf den Weg zum Full TP!*")
-            if t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
+            elif t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
                 t["tp3_hit"] = True
                 alert("🎉 *Full TP erreicht – Glückwunsch!*")
                 t["closed"] = True
@@ -160,13 +169,13 @@ def check_trades():
                 t["sl_hit"] = True
                 alert("❌ *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
                 t["closed"] = True
-            if not t["tp1_hit"] and price <= tp1:
+            elif not t["tp1_hit"] and price <= tp1:
                 t["tp1_hit"] = True
                 alert("🎯 *TP1 erreicht – spätestens jetzt BE setzen oder Trade managen.*")
-            if t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
+            elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
                 t["tp2_hit"] = True
                 alert("📈 *TP2 erreicht – wir machen uns auf den Weg zum Full TP!*")
-            if t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
+            elif t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
                 t["tp3_hit"] = True
                 alert("🎉 *Full TP erreicht – Glückwunsch!*")
                 t["closed"] = True
