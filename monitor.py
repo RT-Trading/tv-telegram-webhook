@@ -13,6 +13,7 @@ METALS_API_KEY = os.environ.get("METALS_API_KEY")
 
 def get_price(symbol):
     symbol = symbol.upper()
+
     COINGECKO_MAP = {
         "BTCUSD": "bitcoin",
         "ETHUSD": "ethereum",
@@ -23,6 +24,7 @@ def get_price(symbol):
     ALPHA_MAP = {
         "XAUUSD": "XAUUSD",
         "SILVER": "XAGUSD",
+        "XAGUSD": "XAGUSD",
         "NAS100": "NDX",
         "GER40": "GDAXI",
         "US30": "DJI",
@@ -42,7 +44,7 @@ def get_price(symbol):
             url = f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd"
             r = requests.get(url, timeout=10)
             preis = float(r.json()[COINGECKO_MAP[symbol]]["usd"])
-            print(f"📦 Preis von CoinGecko: {preis}")
+            print(f"📦 Preis von CoinGecko ({symbol}): {preis}")
             return preis
 
         if symbol in FOREX_SYMBOLS or symbol in ALPHA_MAP:
@@ -54,7 +56,7 @@ def get_price(symbol):
                     timeout=10
                 )
                 preis = float(r.json()["Realtime Currency Exchange Rate"]["5. Exchange Rate"])
-                print(f"📦 Preis von AlphaVantage: {preis}")
+                print(f"📦 Preis von AlphaVantage ({symbol}): {preis}")
                 return preis
             else:
                 r = requests.get(
@@ -64,18 +66,24 @@ def get_price(symbol):
                 )
                 ts = r.json().get("Time Series (5min)", {})
                 preis = float(list(ts.values())[0]["4. close"])
-                print(f"📦 Preis von AlphaVantage (Index): {preis}")
+                print(f"📦 Preis von AlphaVantage Index ({symbol}): {preis}")
                 return preis
 
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             metal_code = "XAU" if "XAU" in symbol else "XAG"
+            if not METALS_API_KEY:
+                log_error(f"❌ METALS_API_KEY fehlt oder ist leer! Symbol: {symbol}")
+                return 0
             r = requests.get(
-                f"https://metals-api.com/api/latest"
-                f"?access_key={METALS_API_KEY}&base={metal_code}&symbols=USD",
+                f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={metal_code}&symbols=USD",
                 timeout=10
             )
-            preis = float(r.json()["rates"]["USD"])
-            print(f"📦 Preis von MetalsAPI: {preis}")
+            data = r.json()
+            if not data.get("success"):
+                log_error(f"❌ MetalsAPI Fehler für {symbol}: {data.get('error', {}).get('info', 'Unbekannter Fehler')}")
+                return 0
+            preis = float(data["rates"]["USD"])
+            print(f"📦 Preis von MetalsAPI ({symbol}): {preis}")
             return preis
 
     except Exception as e:
