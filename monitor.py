@@ -85,7 +85,6 @@ def get_price(symbol):
     print(f"❌ Kein Preis für {symbol}")
     return 0
 
-
 def send_telegram(msg, retry=True):
     try:
         print("📨 Sende:", msg)
