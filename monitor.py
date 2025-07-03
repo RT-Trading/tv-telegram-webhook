@@ -52,7 +52,8 @@ def get_price(symbol):
                 f"?access_key={METALS_API_KEY}&base=USD&symbols={target_symbol}",
                 timeout=10
             )
-            preis = float(r.json()["rates"][target_symbol])
+            rate = float(r.json()["rates"][target_symbol])
+            preis = 1 / rate if rate > 0 else 0
             print(f"📦 Preis von MetalsAPI ({symbol}): {preis}")
             return preis
 
@@ -83,6 +84,7 @@ def get_price(symbol):
 
     print(f"❌ Kein Preis für {symbol}")
     return 0
+
 
 def send_telegram(msg, retry=True):
     try:
