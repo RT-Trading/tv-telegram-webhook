@@ -6,13 +6,14 @@ from datetime import datetime
 
 print("🚀 Monitor gestartet")
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") 
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
 METALS_API_KEY = os.environ.get("METALS_API_KEY")
 
 def get_price(symbol):
     symbol = symbol.upper()
+
     COINGECKO_MAP = {
         "BTCUSD": "bitcoin",
         "ETHUSD": "ethereum",
@@ -23,11 +24,11 @@ def get_price(symbol):
     ALPHA_MAP = {
         "XAUUSD": "XAUUSD",
         "SILVER": "XAGUSD",
-        "NAS100": "NDX",
-        "GER40": "GDAXI",
-        "US30": "DJI",
-        "US500": "SPX",
-        "VIX": "VIX",
+        "NAS100": "^NDX",
+        "GER40": "^GDAXI",
+        "US30": "^DJI",
+        "US500": "^GSPC",
+        "VIX": "^VIX",
         "USDOLLAR": "DX-Y.NYB",
         "GC1!": "XAUUSD"
     }
@@ -42,7 +43,7 @@ def get_price(symbol):
             url = f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd"
             r = requests.get(url, timeout=10)
             preis = float(r.json()[COINGECKO_MAP[symbol]]["usd"])
-            print(f"📦 Preis von CoinGecko: {preis}")
+            print(f"📦 CoinGecko Preis ({symbol}): {preis}")
             return preis
 
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
@@ -53,19 +54,19 @@ def get_price(symbol):
                 timeout=10
             )
             preis = float(r.json()["rates"]["USD"])
-            print(f"📦 Preis von MetalsAPI ({symbol}): {preis}")
+            print(f"📦 MetalsAPI Preis ({symbol}): {preis}")
             return preis
 
         if symbol in FOREX_SYMBOLS or symbol in ALPHA_MAP:
             av_symbol = ALPHA_MAP.get(symbol, symbol)
-            if len(av_symbol) == 6:
+            if len(av_symbol) == 6 and av_symbol.isalpha():
                 r = requests.get(
                     f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE"
                     f"&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}",
                     timeout=10
                 )
                 preis = float(r.json()["Realtime Currency Exchange Rate"]["5. Exchange Rate"])
-                print(f"📦 Preis von AlphaVantage: {preis}")
+                print(f"📦 AlphaVantage Forex Preis: {preis}")
                 return preis
             else:
                 r = requests.get(
@@ -75,15 +76,15 @@ def get_price(symbol):
                 )
                 ts = r.json().get("Time Series (5min)", {})
                 preis = float(list(ts.values())[0]["4. close"])
-                print(f"📦 Preis von AlphaVantage (Index): {preis}")
+                print(f"📦 AlphaVantage Index Preis: {preis}")
                 return preis
 
     except Exception as e:
         log_error(f"Preisabruf Fehler für {symbol}: {e}")
+        send_telegram(f"❌ Preisabruf fehlgeschlagen für `{symbol}` – {e}", retry=False)
 
     print(f"❌ Kein Preis für {symbol}")
     return 0
-
 
 def send_telegram(msg, retry=True):
     try:
