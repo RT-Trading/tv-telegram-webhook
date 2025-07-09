@@ -109,7 +109,14 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        data = request.get_json(force=True)
+        # Statt get_json → kompatibel mit text/plain von TradingView
+        try:
+            raw_data = request.data.decode("utf-8")
+            data = json.loads(raw_data)
+        except Exception as json_err:
+            print("❌ JSON Fehler beim Parsen:", json_err)
+            return f"❌ Ungültiges JSON-Format", 400
+
         print("📩 Empfangen:", data)
 
         entry = float(data.get("entry", 0))
@@ -130,8 +137,9 @@ def webhook():
         return "✅ OK", 200
 
     except Exception as e:
-        print("❌ Fehler:", str(e))
+        print("❌ Fehler im Webhook:", str(e))
         return f"❌ Fehler: {str(e)}", 400
+
 
 @app.route("/trades", methods=["GET"])
 def show_trades():
