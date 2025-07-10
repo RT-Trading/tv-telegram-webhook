@@ -38,13 +38,18 @@ def get_price(symbol):
     }
 
     try:
+        # 1. CoinGecko (Crypto)
         if symbol in COINGECKO_MAP:
-            url = f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd"
-            r = requests.get(url, timeout=10)
-            preis = float(r.json()[COINGECKO_MAP[symbol]]["usd"])
-            print(f"📦 Preis von CoinGecko: {preis}")
+            r = requests.get(
+                f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd",
+                timeout=10
+            )
+            data = r.json()
+            preis = float(data[COINGECKO_MAP[symbol]]["usd"])
+            print(f"📦 CoinGecko Preis: {preis}")
             return preis
 
+        # 2. Metals API
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             base = "XAU" if "XAU" in symbol else "XAG"
             r = requests.get(
@@ -52,48 +57,47 @@ def get_price(symbol):
                 timeout=10
             )
             data = r.json()
-            if data.get("success") and "rates" in data:
+            if data.get("success") and "rates" in data and "USD" in data["rates"]:
                 preis = float(data["rates"]["USD"])
-                print(f"📦 Preis von MetalsAPI ({symbol}): {preis}")
+                print(f"📦 MetalsAPI Preis: {preis}")
                 return preis
             else:
-                raise Exception(f"Metals API Antwort ungültig: {data}")
+                raise Exception(f"MetalsAPI Fehler: {data}")
 
-        if symbol in FOREX_SYMBOLS or symbol in ALPHA_MAP:
-            av_symbol = ALPHA_MAP.get(symbol, symbol)
-            if len(av_symbol) == 6:
-                # Forex Preis
-                r = requests.get(
-                    f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE"
-                    f"&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}",
-                    timeout=10
-                )
-                data = r.json()
-                preis = float(data["Realtime Currency Exchange Rate"]["5. Exchange Rate"])
-                print(f"📦 Preis von AlphaVantage Forex: {preis}")
-                return preis
-            else:
-                # Index Preis
-                r = requests.get(
-                    f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY"
-                    f"&symbol={av_symbol}&interval=5min&apikey={ALPHA_API_KEY}",
-                    timeout=10
-                )
-                ts = r.json().get("Time Series (5min)")
-                if not ts:
-                    raise Exception(f"AlphaVantage Zeitreihe leer: {r.json()}")
-                letzter_eintrag = next(iter(ts.values()))
-                preis = float(letzter_eintrag["4. close"])
-                print(f"📦 Preis von AlphaVantage Index: {preis}")
-                return preis
+        # 3. Alpha Vantage (Forex & Indices)
+        av_symbol = ALPHA_MAP.get(symbol, symbol)
+        if len(av_symbol) == 6:  # Forex
+            r = requests.get(
+                f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE"
+                f"&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}",
+                timeout=10
+            )
+            data = r.json()
+            rate = data.get("Realtime Currency Exchange Rate", {}).get("5. Exchange Rate")
+            if not rate:
+                raise Exception(f"AlphaVantage Forex Fehler: {data}")
+            preis = float(rate)
+            print(f"📦 AlphaVantage Forex: {preis}")
+            return preis
+        else:  # Indizes
+            r = requests.get(
+                f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY"
+                f"&symbol={av_symbol}&interval=5min&apikey={ALPHA_API_KEY}",
+                timeout=10
+            )
+            ts = r.json().get("Time Series (5min)")
+            if not ts:
+                raise Exception(f"AlphaVantage Index Fehler: {r.json()}")
+            letzter = next(iter(ts.values()))
+            preis = float(letzter["4. close"])
+            print(f"📦 AlphaVantage Index: {preis}")
+            return preis
 
     except Exception as e:
-        log_error(f"❌ Preisabruf fehlgeschlagen für {symbol} – {e}")
+        log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
 
     print(f"❌ Kein Preis für {symbol}")
     return 0
-
-
 
 def send_telegram(msg, retry=True):
     try:
