@@ -12,7 +12,7 @@ app = Flask(__name__)
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
-METALS_API_KEY = os.environ.get("METALS_API_KEY")
+METALS_API_KEY = "40si7u8md80d0r3c5u096363sm051vyi1mqh25m6ujvcm3x2ddamp7wmu57g"
 
 @app.route("/")
 def health():
