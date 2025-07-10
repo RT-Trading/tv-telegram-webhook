@@ -27,7 +27,6 @@ def calc_tp(entry, sl, side, symbol):
         else:
             return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
-    # Prozentuale Methode (für Gold etc.)
     if side == "long":
         return entry * (1 + tp_pct[0]), entry * (1 + tp_pct[1]), entry * (1 + tp_pct[2])
     else:
@@ -104,12 +103,11 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
     with open("trades.json", "w") as f:
         json.dump(trades, f, indent=2)
 
-
 # === Webhook Endpoint ===
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        # Statt get_json → kompatibel mit text/plain von TradingView
+        # Kompatibel mit text/plain von TradingView
         try:
             raw_data = request.data.decode("utf-8")
             data = json.loads(raw_data)
@@ -139,7 +137,6 @@ def webhook():
     except Exception as e:
         print("❌ Fehler im Webhook:", str(e))
         return f"❌ Fehler: {str(e)}", 400
-
 
 @app.route("/trades", methods=["GET"])
 def show_trades():
