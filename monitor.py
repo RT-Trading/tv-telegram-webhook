@@ -2,17 +2,25 @@ import time
 import json
 import requests
 import os
+import threading
 from datetime import datetime
+from flask import Flask
 
-print("🚀 Monitor gestartet")
+app = Flask(__name__)
 
+# === ENV-VARIABLEN ===
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
 METALS_API_KEY = os.environ.get("METALS_API_KEY")
 
+@app.route("/")
+def health():
+    return "✅ Monitor läuft", 200
+
 def get_price(symbol):
     symbol = symbol.upper()
+
     COINGECKO_MAP = {
         "BTCUSD": "bitcoin",
         "ETHUSD": "ethereum",
@@ -38,24 +46,18 @@ def get_price(symbol):
     }
 
     try:
-        # 1. CoinGecko (Crypto)
+        # Crypto
         if symbol in COINGECKO_MAP:
-            r = requests.get(
-                f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd",
-                timeout=10
-            )
+            r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd", timeout=10)
             data = r.json()
             preis = float(data[COINGECKO_MAP[symbol]]["usd"])
             print(f"📦 CoinGecko Preis: {preis}")
             return preis
 
-        # 2. Metals API
+        # Metals API
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             base = "XAU" if "XAU" in symbol else "XAG"
-            r = requests.get(
-                f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD",
-                timeout=10
-            )
+            r = requests.get(f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD", timeout=10)
             data = r.json()
             if data.get("success") and "rates" in data and "USD" in data["rates"]:
                 preis = float(data["rates"]["USD"])
@@ -64,12 +66,11 @@ def get_price(symbol):
             else:
                 raise Exception(f"MetalsAPI Fehler: {data}")
 
-        # 3. Alpha Vantage (Forex & Indices)
+        # Forex & Indizes via Alpha Vantage
         av_symbol = ALPHA_MAP.get(symbol, symbol)
         if len(av_symbol) == 6:  # Forex
             r = requests.get(
-                f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE"
-                f"&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}",
+                f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}",
                 timeout=10
             )
             data = r.json()
@@ -79,10 +80,9 @@ def get_price(symbol):
             preis = float(rate)
             print(f"📦 AlphaVantage Forex: {preis}")
             return preis
-        else:  # Indizes
+        else:  # Index
             r = requests.get(
-                f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY"
-                f"&symbol={av_symbol}&interval=5min&apikey={ALPHA_API_KEY}",
+                f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={av_symbol}&interval=5min&apikey={ALPHA_API_KEY}",
                 timeout=10
             )
             ts = r.json().get("Time Series (5min)")
@@ -200,10 +200,16 @@ def check_trades():
 
     save_trades(updated)
 
-if __name__ == "__main__":
+# === START ===
+def monitor_loop():
     while True:
         try:
             check_trades()
         except Exception as e:
             log_error(f"Hauptfehler: {e}")
         time.sleep(60)
+
+if __name__ == "__main__":
+    threading.Thread(target=monitor_loop, daemon=True).start()
+    app.run(host="0.0.0.0", port=5000)
+
