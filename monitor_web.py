@@ -8,15 +8,16 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# === HARDCODED API-KEYS (zum Testen – später wieder sichern) ===
-BOT_TOKEN = "8138998907:AAGe7lTtVqctKW1W2i_ivX8iONPkaUTV_sU"
-CHAT_ID = "-1002497064342"
-ALPHA_API_KEY = "Y0R96TR1F6ZXP85H"
-METALS_API_KEY = "40si7u8md80d0r3c5u096363sm05lvy1imqh25m6ujvcm3xd2damp7wmu57g"
+# === ENV-VARIABLEN ===
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+METALS_API_KEY = os.environ.get("METALS_API_KEY")
+TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY")
 
 @app.route("/")
 def health():
     return "✅ Monitor läuft", 200
+
 
 def get_price(symbol):
     symbol = symbol.upper()
@@ -28,21 +29,14 @@ def get_price(symbol):
         "DOGEUSD": "dogecoin"
     }
 
-    ALPHA_MAP = {
-        "XAUUSD": "XAUUSD",
-        "SILVER": "XAGUSD",
+    TWELVE_MAP = {
+        "EURUSD": "EUR/USD",
+        "GBPUSD": "GBP/USD",
+        "GBPJPY": "GBP/JPY",
         "NAS100": "NDX",
-        "GER40": "GDAXI",
         "US30": "DJI",
         "US500": "SPX",
-        "VIX": "VIX",
-        "USDOLLAR": "DX-Y.NYB",
-        "GC1!": "XAUUSD"
-    }
-
-    FOREX_SYMBOLS = {
-        "GBPJPY", "GBPUSD", "EURUSD", "EURJPY", "USDCHF",
-        "NZDCHF", "EURGBP", "USDCAD", "AUDJPY", "CHFJPY", "SOLEUR"
+        "GER40": "DAX"
     }
 
     try:
@@ -50,7 +44,6 @@ def get_price(symbol):
         if symbol in COINGECKO_MAP:
             r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd", timeout=10)
             data = r.json()
-            print("CoinGecko:", data)
             return float(data[COINGECKO_MAP[symbol]]["usd"])
 
         # === MetalsAPI ===
@@ -58,37 +51,20 @@ def get_price(symbol):
             base = "XAU" if "XAU" in symbol else "XAG"
             r = requests.get(f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD", timeout=10)
             data = r.json()
-            print("MetalsAPI:", data)
             if data.get("success") and "rates" in data and "USD" in data["rates"]:
                 return float(data["rates"]["USD"])
             else:
                 raise Exception(f"MetalsAPI Fehler: {data}")
 
-        # === Alpha Vantage ===
-        av_symbol = ALPHA_MAP.get(symbol, symbol)
-        if len(av_symbol) == 6:  # Forex
-            r = requests.get(
-                f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}",
-                timeout=10
-            )
+        # === Twelve Data ===
+        if symbol in TWELVE_MAP:
+            sym = TWELVE_MAP[symbol]
+            r = requests.get(f"https://api.twelvedata.com/price?symbol={sym}&apikey={TWELVE_API_KEY}", timeout=10)
             data = r.json()
-            print("Alpha Forex:", data)
-            rate = data.get("Realtime Currency Exchange Rate", {}).get("5. Exchange Rate")
-            if not rate:
-                raise Exception(f"AlphaVantage Forex Fehler: {data}")
-            return float(rate)
-        else:  # Index
-            r = requests.get(
-                f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={av_symbol}&interval=5min&apikey={ALPHA_API_KEY}",
-                timeout=10
-            )
-            data = r.json()
-            print("Alpha Index:", data)
-            ts = data.get("Time Series (5min)")
-            if not ts:
-                raise Exception(f"AlphaVantage Index Fehler: {data}")
-            letzter = next(iter(ts.values()))
-            return float(letzter["4. close"])
+            if "price" in data:
+                return float(data["price"])
+            else:
+                raise Exception(f"TwelveData Fehler: {data}")
 
     except Exception as e:
         log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
@@ -98,7 +74,6 @@ def get_price(symbol):
 
 def send_telegram(msg, retry=True):
     try:
-        print("📨 Sende:", msg)
         r = requests.post(
             f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
             data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
@@ -168,10 +143,10 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price >= tp1:
                 t["tp1_hit"] = True
-                alert("🎯 *TP1 erreicht – spätestens jetzt BE setzen oder Trade managen.*")
+                alert("🌟 *TP1 erreicht – BE setzen oder Trade managen.*")
             elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
                 t["tp2_hit"] = True
-                alert("📈 *TP2 erreicht – wir machen uns auf den Weg zum Full TP!*")
+                alert("📈 *TP2 erreicht – auf dem Weg zum Full TP!*")
             elif t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
                 t["tp3_hit"] = True
                 alert("🎉 *Full TP erreicht – Glückwunsch!*")
@@ -184,10 +159,10 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price <= tp1:
                 t["tp1_hit"] = True
-                alert("🎯 *TP1 erreicht – spätestens jetzt BE setzen oder Trade managen.*")
+                alert("🌟 *TP1 erreicht – BE setzen oder Trade managen.*")
             elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
                 t["tp2_hit"] = True
-                alert("📈 *TP2 erreicht – wir machen uns auf den Weg zum Full TP!*")
+                alert("📈 *TP2 erreicht – auf dem Weg zum Full TP!*")
             elif t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
                 t["tp3_hit"] = True
                 alert("🎉 *Full TP erreicht – Glückwunsch!*")
@@ -203,13 +178,7 @@ def monitor_loop():
             check_trades()
         except Exception as e:
             log_error(f"Hauptfehler: {e}")
-        time.sleep(60)
+        time.sleep(600)
 
-def monitor_loop():
-    while True:
-        try:
-            check_trades()
-        except Exception as e:
-            log_error(f"Hauptfehler: {e}")
-        time.sleep(600)  # statt 60 Sekunden, 10 Minuten warten
-
+# Starte den Thread
+threading.Thread(target=monitor_loop, daemon=True).start()
