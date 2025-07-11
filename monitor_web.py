@@ -8,13 +8,11 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# === ENV-VARIABLEN ===
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
-METALS_API_KEY = os.environ.get("METALS_API_KEY")  # nicht hardcoden!
-
-first_run = True  # Verhindert Alerts beim ersten Start
+# === HARDCODED API-KEYS (zum Testen – später wieder sichern) ===
+BOT_TOKEN = "8138998907:AAGe7lTtVqctKW1W2i_ivX8iONPkaUTV_sU"
+CHAT_ID = "-1002497064342"
+ALPHA_API_KEY = "Y0R96TR1F6ZXP85H"
+METALS_API_KEY = "40si7u8md80d0r3c5u096363sm05lvy1imqh25m6ujvcm3xd2damp7wmu57g"
 
 @app.route("/")
 def health():
@@ -48,38 +46,64 @@ def get_price(symbol):
     }
 
     try:
+        # === CoinGecko ===
         if symbol in COINGECKO_MAP:
             r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd", timeout=10)
-            return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
+            data = r.json()
+            print("CoinGecko:", data)
+            return float(data[COINGECKO_MAP[symbol]]["usd"])
 
+        # === MetalsAPI ===
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             base = "XAU" if "XAU" in symbol else "XAG"
             r = requests.get(f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD", timeout=10)
             data = r.json()
+            print("MetalsAPI:", data)
             if data.get("success") and "rates" in data and "USD" in data["rates"]:
                 return float(data["rates"]["USD"])
             else:
                 raise Exception(f"MetalsAPI Fehler: {data}")
 
+        # === Alpha Vantage ===
         av_symbol = ALPHA_MAP.get(symbol, symbol)
-        if len(av_symbol) == 6:
-            r = requests.get(f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}", timeout=10)
-            rate = r.json().get("Realtime Currency Exchange Rate", {}).get("5. Exchange Rate")
-            return float(rate) if rate else 0
-        else:
-            r = requests.get(f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={av_symbol}&interval=5min&apikey={ALPHA_API_KEY}", timeout=10)
-            ts = r.json().get("Time Series (5min)")
+        if len(av_symbol) == 6:  # Forex
+            r = requests.get(
+                f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}",
+                timeout=10
+            )
+            data = r.json()
+            print("Alpha Forex:", data)
+            rate = data.get("Realtime Currency Exchange Rate", {}).get("5. Exchange Rate")
+            if not rate:
+                raise Exception(f"AlphaVantage Forex Fehler: {data}")
+            return float(rate)
+        else:  # Index
+            r = requests.get(
+                f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={av_symbol}&interval=5min&apikey={ALPHA_API_KEY}",
+                timeout=10
+            )
+            data = r.json()
+            print("Alpha Index:", data)
+            ts = data.get("Time Series (5min)")
             if not ts:
-                raise Exception(f"AlphaVantage Index Fehler: {r.json()}")
+                raise Exception(f"AlphaVantage Index Fehler: {data}")
             letzter = next(iter(ts.values()))
             return float(letzter["4. close"])
+
     except Exception as e:
         log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
-        return 0
+
+    print(f"❌ Kein Preis für {symbol}")
+    return 0
 
 def send_telegram(msg, retry=True):
     try:
-        r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
+        print("📨 Sende:", msg)
+        r = requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
+            timeout=10
+        )
         if r.status_code != 200:
             raise Exception(f"Status {r.status_code}: {r.text}")
     except Exception as e:
@@ -110,7 +134,6 @@ def save_trades(trades):
         log_error(f"Fehler beim Speichern von trades.json: {e}")
 
 def check_trades():
-    global first_run
     trades = load_trades()
     updated = []
 
@@ -136,12 +159,7 @@ def check_trades():
             updated.append(t)
             continue
 
-        def alert(msg):
-            if first_run:
-                print(f"⏭️ {symbol}: Erste Runde – überspringe Alert")
-                return
-            send_telegram(f"*{symbol}* | *{side.upper()}*\n{msg}\n💰 Preis: `{price:.2f}`")
-
+        def alert(msg): send_telegram(f"*{symbol}* | *{side.upper()}*\n{msg}\n💰 Preis: `{price:.2f}`")
 
         if side == "long":
             if not t["sl_hit"] and price <= sl:
@@ -178,7 +196,6 @@ def check_trades():
         updated.append(t)
 
     save_trades(updated)
-    first_run = False  # erst nach dem ersten Check Alerts erlauben
 
 def monitor_loop():
     while True:
@@ -188,7 +205,6 @@ def monitor_loop():
             log_error(f"Hauptfehler: {e}")
         time.sleep(60)
 
-# Start
 if __name__ == "__main__":
     threading.Thread(target=monitor_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=5000)
