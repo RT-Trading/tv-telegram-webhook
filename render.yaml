@@ -6,6 +6,7 @@ services:
     startCommand: gunicorn main:app
     plan: starter
     autoDeploy: true
+    healthCheckPath: /
 
   - type: worker
     name: trade-monitor
