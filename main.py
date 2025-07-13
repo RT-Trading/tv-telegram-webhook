@@ -258,5 +258,4 @@ def monitor_loop():
 
 # === Start Server ===
 if __name__ == "__main__":
-    threading.Thread(target=monitor_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=5000)
