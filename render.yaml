@@ -26,5 +26,3 @@ services:
         fromEnvVar: TWELVE_API_KEY
       - key: METALS_API_KEY
         fromEnvVar: METALS_API_KEY
-
-
