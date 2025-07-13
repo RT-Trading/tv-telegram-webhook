@@ -9,35 +9,37 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ['TELEGRAM_BOT_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
 
-# === SL: 0,5 %, TP1: 1,0 %, TP2: 1,8 %, Full TP: 2,8 % ===
 def calc_sl(entry, side):
     risk_pct = 0.005
     return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
 
-# Neue flexible TP-Berechnung nach Symbol
 def calc_tp(entry, sl, side, symbol):
-    if symbol == "XAUUSD":
-        # Angepasste kleinere Ziele für Gold
-        tp_pct = [0.004, 0.008, 0.012]  # 0.4%, 0.8%, 1.2%
+    metals = ["XAUUSD", "SILVER"]
+    risk = abs(entry - sl)
+
+    if symbol in metals:
+        tp_pct = [0.004, 0.008, 0.012]
+        if side == "long":
+            return entry * (1 + tp_pct[0]), entry * (1 + tp_pct[1]), entry * (1 + tp_pct[2])
+        else:
+            return entry * (1 - tp_pct[0]), entry * (1 - tp_pct[1]), entry * (1 - tp_pct[2])
     else:
-        # Standard-Ziele für andere
-        risk = abs(entry - sl)
         if side == 'long':
             return entry + 2 * risk, entry + 3.6 * risk, entry + 5.6 * risk
         else:
             return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
-    if side == "long":
-        return entry * (1 + tp_pct[0]), entry * (1 + tp_pct[1]), entry * (1 + tp_pct[2])
-    else:
-        return entry * (1 - tp_pct[0]), entry * (1 - tp_pct[1]), entry * (1 - tp_pct[2])
-
-# === Nachricht formatieren mit Symbol und korrektem Icon ===
 def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
-    if symbol in ["BTCUSD", "NAS100", "XAUUSD"]:
-        digits = 2
-    elif symbol in ["EURUSD", "GBPUSD"]:
+    five_digits = ["EURUSD", "GBPUSD", "GBPJPY"]
+    three_digits = ["USDJPY"]
+    two_digits = ["BTCUSD", "NAS100", "XAUUSD", "SILVER", "US30", "US500", "GER40"]
+
+    if symbol in five_digits:
         digits = 5
+    elif symbol in three_digits:
+        digits = 3
+    elif symbol in two_digits:
+        digits = 2
     else:
         digits = 4
 
@@ -60,7 +62,6 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 🔁 TP1 erreicht → *Breakeven setzen*.
 """
 
-# === Telegram senden ===
 def send_to_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -69,15 +70,12 @@ def send_to_telegram(text):
         'parse_mode': 'Markdown'
     }
 
-    print("📤 Telegram-Payload:", payload)
     r = requests.post(url, data=payload)
     print("📡 Telegram Response:", r.status_code, r.text)
 
     if r.status_code != 200:
-        print("❌ Telegram-Fehler:", r.text)
         raise Exception("Telegram-Fehler")
 
-# === Trade speichern ===
 def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
     trade = {
         "symbol": symbol,
@@ -103,18 +101,11 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
     with open("trades.json", "w") as f:
         json.dump(trades, f, indent=2)
 
-# === Webhook Endpoint ===
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        # Kompatibel mit text/plain von TradingView
-        try:
-            raw_data = request.data.decode("utf-8")
-            data = json.loads(raw_data)
-        except Exception as json_err:
-            print("❌ JSON Fehler beim Parsen:", json_err)
-            return f"❌ Ungültiges JSON-Format", 400
-
+        raw_data = request.data.decode("utf-8")
+        data = json.loads(raw_data)
         print("📩 Empfangen:", data)
 
         entry = float(data.get("entry", 0))
@@ -128,14 +119,12 @@ def webhook():
         tp1, tp2, tp3 = calc_tp(entry, sl, side, symbol)
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
 
-        print("🧪 Nachricht an Telegram:", msg)
         send_to_telegram(msg)
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
-        print("✅ Gesendet:", symbol, side, entry)
         return "✅ OK", 200
 
     except Exception as e:
-        print("❌ Fehler im Webhook:", str(e))
+        print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
 @app.route("/trades", methods=["GET"])
@@ -145,7 +134,3 @@ def show_trades():
             return f.read(), 200, {'Content-Type': 'application/json'}
     except Exception as e:
         return f"Fehler beim Laden: {e}", 500
-
-# === Lokaler Teststart ===
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
