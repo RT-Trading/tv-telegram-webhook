@@ -1,4 +1,3 @@
-# monitor.py (angepasst ohne AlphaVantage, nur TwelveData + MetalsAPI + CoinGecko)
 import time
 import json
 import requests
