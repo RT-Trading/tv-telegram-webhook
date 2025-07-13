@@ -3,6 +3,14 @@ services:
     name: tv-telegram-webhook
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: gunicorn main:app
+    plan: starter
+    autoDeploy: true
+
+  - type: worker
+    name: trade-monitor
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python monitor.py
     plan: starter
     autoDeploy: true
