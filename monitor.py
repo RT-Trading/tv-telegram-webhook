@@ -1,3 +1,4 @@
+# monitor.py (angepasst ohne AlphaVantage, nur TwelveData + MetalsAPI + CoinGecko)
 import time
 import json
 import requests
@@ -8,6 +9,7 @@ from flask import Flask
 
 app = Flask(__name__)
 
+# === ENV VARIABLEN ===
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY")
@@ -23,15 +25,13 @@ def get_price(symbol):
     symbol = symbol.upper()
 
     COINGECKO_MAP = {
-        "BTCUSD": "bitcoin",
-        "ETHUSD": "ethereum",
-        "XRPUSD": "ripple",
-        "DOGEUSD": "dogecoin"
+        "BTCUSD": "bitcoin"
     }
 
-    FOREX_SYMBOLS = {
-        "GBPJPY", "GBPUSD", "EURUSD", "EURJPY", "USDCHF",
-        "NZDCHF", "EURGBP", "USDCAD", "AUDJPY", "CHFJPY", "SOLEUR"
+    METALS_MAP = {
+        "XAUUSD": "XAU",
+        "SILVER": "XAG",
+        "XAGUSD": "XAG"
     }
 
     try:
@@ -39,8 +39,8 @@ def get_price(symbol):
             r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd", timeout=10)
             return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
 
-        if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
-            base = "XAU" if "XAU" in symbol else "XAG"
+        if symbol in METALS_MAP:
+            base = METALS_MAP[symbol]
             r = requests.get(f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD", timeout=10)
             data = r.json()
             if data.get("success") and "rates" in data and "USD" in data["rates"]:
@@ -48,8 +48,14 @@ def get_price(symbol):
             else:
                 raise Exception(f"MetalsAPI Fehler: {data}")
 
-        log_error(f"⚠️ Symbol {symbol} nicht unterstützt (keine API definiert)")
-        return 0
+        # TwelveData
+        r = requests.get(f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_API_KEY}", timeout=10)
+        data = r.json()
+        if "price" in data:
+            return float(data["price"])
+        else:
+            raise Exception(f"TwelveData Fehler: {data}")
+
     except Exception as e:
         log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
         return 0
