@@ -8,3 +8,7 @@ if __name__ == "__main__":
         except Exception as e:
             log_error(f"Hauptfehler (Worker): {e}")
         time.sleep(120)  # alle 10 Minuten
+
+from main import send_telegram
+send_telegram("🔔 Testsignal von Worker")
+
