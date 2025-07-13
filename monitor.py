@@ -7,4 +7,4 @@ if __name__ == "__main__":
             check_trades()
         except Exception as e:
             log_error(f"Hauptfehler (Worker): {e}")
-        time.sleep(600)  # alle 10 Minuten
+        time.sleep(120)  # alle 10 Minuten
