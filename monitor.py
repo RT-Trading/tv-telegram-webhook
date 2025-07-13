@@ -11,7 +11,7 @@ app = Flask(__name__)
 # === ENV-VARIABLEN ===
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-ALPHA_API_KEY = os.environ.get("ALPHA_API_KEY")
+TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY")
 METALS_API_KEY = os.environ.get("METALS_API_KEY")  # nicht hardcoden!
 
 first_run = True  # Verhindert Alerts beim ersten Start
