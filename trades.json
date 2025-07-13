@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "symbol": "BTCUSD",
+    "entry": 117584,24
+    "sl": 116996,32
+    "tp1": 118760.08,
+    "tp2": 119700,76
+    "tp3": 120876,60
+    "side": "long",
+    "tp1_hit": false,
+    "tp2_hit": false,
+    "tp3_hit": false,
+    "sl_hit": false,
+    "closed": false
+  }
+]
+
