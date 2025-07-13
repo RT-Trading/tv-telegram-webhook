@@ -8,13 +8,12 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# === ENV-VARIABLEN ===
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY")
-METALS_API_KEY = os.environ.get("METALS_API_KEY")  # nicht hardcoden!
+METALS_API_KEY = os.environ.get("METALS_API_KEY")
 
-first_run = True  # Verhindert Alerts beim ersten Start
+first_run = True
 
 @app.route("/")
 def health():
@@ -28,18 +27,6 @@ def get_price(symbol):
         "ETHUSD": "ethereum",
         "XRPUSD": "ripple",
         "DOGEUSD": "dogecoin"
-    }
-
-    ALPHA_MAP = {
-        "XAUUSD": "XAUUSD",
-        "SILVER": "XAGUSD",
-        "NAS100": "NDX",
-        "GER40": "GDAXI",
-        "US30": "DJI",
-        "US500": "SPX",
-        "VIX": "VIX",
-        "USDOLLAR": "DX-Y.NYB",
-        "GC1!": "XAUUSD"
     }
 
     FOREX_SYMBOLS = {
@@ -61,18 +48,8 @@ def get_price(symbol):
             else:
                 raise Exception(f"MetalsAPI Fehler: {data}")
 
-        av_symbol = ALPHA_MAP.get(symbol, symbol)
-        if len(av_symbol) == 6:
-            r = requests.get(f"https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency={av_symbol[:3]}&to_currency={av_symbol[3:]}&apikey={ALPHA_API_KEY}", timeout=10)
-            rate = r.json().get("Realtime Currency Exchange Rate", {}).get("5. Exchange Rate")
-            return float(rate) if rate else 0
-        else:
-            r = requests.get(f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol={av_symbol}&interval=5min&apikey={ALPHA_API_KEY}", timeout=10)
-            ts = r.json().get("Time Series (5min)")
-            if not ts:
-                raise Exception(f"AlphaVantage Index Fehler: {r.json()}")
-            letzter = next(iter(ts.values()))
-            return float(letzter["4. close"])
+        log_error(f"⚠️ Symbol {symbol} nicht unterstützt (keine API definiert)")
+        return 0
     except Exception as e:
         log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
         return 0
@@ -142,7 +119,6 @@ def check_trades():
                 return
             send_telegram(f"*{symbol}* | *{side.upper()}*\n{msg}\n💰 Preis: `{price:.2f}`")
 
-
         if side == "long":
             if not t["sl_hit"] and price <= sl:
                 t["sl_hit"] = True
@@ -178,7 +154,7 @@ def check_trades():
         updated.append(t)
 
     save_trades(updated)
-    first_run = False  # erst nach dem ersten Check Alerts erlauben
+    first_run = False
 
 def monitor_loop():
     while True:
@@ -188,7 +164,6 @@ def monitor_loop():
             log_error(f"Hauptfehler: {e}")
         time.sleep(60)
 
-# Start
 if __name__ == "__main__":
     threading.Thread(target=monitor_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=5000)
