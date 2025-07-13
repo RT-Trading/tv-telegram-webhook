@@ -3,7 +3,7 @@ services:
     name: tv-telegram-webhook
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn main:app
     plan: starter
     envVars:
       - key: TELEGRAM_BOT_TOKEN
