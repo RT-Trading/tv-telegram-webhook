@@ -19,7 +19,7 @@ def calc_tp(entry, sl, side, symbol):
     risk = abs(entry - sl)
 
     if symbol in metals:
-        tp_pct = [0.004, 0.008, 0.012]
+        tp_pct = [0.004, 0.008, 0.012]  # 0.4%, 0.8%, 1.2%
         if side == "long":
             return entry * (1 + tp_pct[0]), entry * (1 + tp_pct[1]), entry * (1 + tp_pct[2])
         else:
@@ -70,8 +70,10 @@ def send_to_telegram(text):
         'text': text,
         'parse_mode': 'Markdown'
     }
+
     r = requests.post(url, data=payload)
     print("📡 Telegram Response:", r.status_code, r.text)
+
     if r.status_code != 200:
         raise Exception("Telegram-Fehler")
 
