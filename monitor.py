@@ -8,13 +8,12 @@ from flask import Flask
 
 app = Flask(__name__)
 
-# === ENV-VARIABLEN ===
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY")
 METALS_API_KEY = os.environ.get("METALS_API_KEY")
 
-first_run = True  # Verhindert Alerts beim ersten Start
+first_run = True
 
 @app.route("/")
 def health():
@@ -38,45 +37,33 @@ def get_price(symbol):
 
     try:
         if symbol in COINGECKO_MAP:
-            r = requests.get(
-                f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd",
-                timeout=10
-            )
+            r = requests.get(f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd", timeout=10)
             return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
 
         if symbol in METALS_MAP:
             base = METALS_MAP[symbol]
-            r = requests.get(
-                f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD",
-                timeout=10
-            )
+            r = requests.get(f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD", timeout=10)
             data = r.json()
             if data.get("success") and "rates" in data and "USD" in data["rates"]:
                 return float(data["rates"]["USD"])
             else:
                 raise Exception(f"MetalsAPI Fehler: {data}")
 
-        # Fallback: TwelveData
-        r = requests.get(
-            f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_API_KEY}",
-            timeout=10
-        )
+        # Fallback: Twelve Data (z.B. für NAS100, GER40 etc.)
+        r = requests.get(f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_API_KEY}", timeout=10)
         data = r.json()
         if "price" in data:
             return float(data["price"])
         else:
             raise Exception(f"TwelveData Fehler: {data}")
+
     except Exception as e:
         log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
         return 0
 
 def send_telegram(msg, retry=True):
     try:
-        r = requests.post(
-            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"},
-            timeout=10
-        )
+        r = requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
         if r.status_code != 200:
             raise Exception(f"Status {r.status_code}: {r.text}")
     except Exception as e:
@@ -187,3 +174,4 @@ def monitor_loop():
 if __name__ == "__main__":
     threading.Thread(target=monitor_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=5000)
+
