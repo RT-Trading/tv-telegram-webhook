@@ -14,8 +14,6 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 METALS_API_KEY = os.environ.get("METALS_API_KEY")
 TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY")
 
-first_run = True
-
 @app.route("/")
 def health():
     return "✅ Monitor läuft", 200
@@ -31,7 +29,6 @@ def get_price(symbol):
     }
 
     try:
-        # === Crypto via CoinGecko ===
         if symbol in COINGECKO_MAP:
             r = requests.get(
                 f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd",
@@ -39,7 +36,6 @@ def get_price(symbol):
             )
             return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
 
-        # === Metals via MetalsAPI ===
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             base = "XAU" if "XAU" in symbol else "XAG"
             r = requests.get(
@@ -52,7 +48,6 @@ def get_price(symbol):
             else:
                 raise Exception(f"MetalsAPI Fehler: {data}")
 
-        # === Alles andere via Twelve Data ===
         r = requests.get(
             f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_API_KEY}",
             timeout=10
@@ -76,12 +71,15 @@ def send_telegram(msg, retry=True):
         )
         if r.status_code != 200:
             raise Exception(f"Status {r.status_code}: {r.text}")
+        else:
+            print(f"📤 Telegram gesendet: {msg}")
     except Exception as e:
         log_error(f"Telegram Fehler: {e}")
         if retry:
             send_telegram(msg, retry=False)
 
 def log_error(text):
+    print(f"⚠️ {text}")  # WICHTIG für Render-Logs
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open("errors.log", "a") as f:
         f.write(f"[{now}] {text}\n")
@@ -104,7 +102,6 @@ def save_trades(trades):
         log_error(f"Fehler beim Speichern von trades.json: {e}")
 
 def check_trades():
-    global first_run
     trades = load_trades()
     updated = []
 
@@ -131,9 +128,6 @@ def check_trades():
             continue
 
         def alert(msg):
-            if first_run:
-                print(f"⏭️ {symbol}: Erste Runde – überspringe Alert")
-                return
             send_telegram(f"*{symbol}* | *{side.upper()}*\n{msg}\n💰 Preis: `{price:.2f}`")
 
         if side == "long":
@@ -143,10 +137,10 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price >= tp1:
                 t["tp1_hit"] = True
-                alert("🎯 *TP1 erreicht – spätestens jetzt BE setzen oder Trade managen.*")
+                alert("🎯 *TP1 erreicht – BE setzen oder Trade managen.*")
             elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
                 t["tp2_hit"] = True
-                alert("📈 *TP2 erreicht – wir machen uns auf den Weg zum Full TP!*")
+                alert("📈 *TP2 erreicht – Full TP in Sicht!*")
             elif t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
                 t["tp3_hit"] = True
                 alert("🎉 *Full TP erreicht – Glückwunsch!*")
@@ -159,10 +153,10 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price <= tp1:
                 t["tp1_hit"] = True
-                alert("🎯 *TP1 erreicht – spätestens jetzt BE setzen oder Trade managen.*")
+                alert("🎯 *TP1 erreicht – BE setzen oder Trade managen.*")
             elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
                 t["tp2_hit"] = True
-                alert("📈 *TP2 erreicht – wir machen uns auf den Weg zum Full TP!*")
+                alert("📈 *TP2 erreicht – Full TP in Sicht!*")
             elif t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
                 t["tp3_hit"] = True
                 alert("🎉 *Full TP erreicht – Glückwunsch!*")
@@ -171,9 +165,9 @@ def check_trades():
         updated.append(t)
 
     save_trades(updated)
-    first_run = False
 
 def monitor_loop():
+    send_telegram("✅ *Trade-Monitor gestartet*")  # Test-Message
     while True:
         try:
             check_trades()
@@ -181,10 +175,6 @@ def monitor_loop():
             log_error(f"Hauptfehler: {e}")
         time.sleep(60)
 
-# Start
 if __name__ == "__main__":
     threading.Thread(target=monitor_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=5000)
-
-print("🚀 Monitor gestartet...")
-
