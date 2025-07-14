@@ -14,35 +14,58 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY")
 METALS_API_KEY = os.environ.get("METALS_API_KEY")
 
-first_run = True  # Verhindert Alerts beim ersten Durchlauf
+first_run = True  # Verhindert Alerts beim ersten Start
 
 @app.route("/")
 def health():
     return "✅ Monitor läuft", 200
 
 def get_price(symbol):
-    try:
-        symbol = symbol.upper()
+    symbol = symbol.upper()
 
-        if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
-            base = "XAU" if "XAU" in symbol else "XAG"
-            url = f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD"
-            r = requests.get(url, timeout=10)
+    COINGECKO_MAP = {
+        "BTCUSD": "bitcoin",
+        "ETHUSD": "ethereum",
+        "XRPUSD": "ripple",
+        "DOGEUSD": "dogecoin"
+    }
+
+    METALS_MAP = {
+        "XAUUSD": "XAU",
+        "SILVER": "XAG",
+        "XAGUSD": "XAG"
+    }
+
+    try:
+        if symbol in COINGECKO_MAP:
+            r = requests.get(
+                f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd",
+                timeout=10
+            )
+            return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
+
+        if symbol in METALS_MAP:
+            base = METALS_MAP[symbol]
+            r = requests.get(
+                f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD",
+                timeout=10
+            )
             data = r.json()
             if data.get("success") and "rates" in data and "USD" in data["rates"]:
                 return float(data["rates"]["USD"])
             else:
                 raise Exception(f"MetalsAPI Fehler: {data}")
 
-        # Alle anderen über TwelveData
-        url = f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_API_KEY}"
-        r = requests.get(url, timeout=10)
+        # Fallback: TwelveData
+        r = requests.get(
+            f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_API_KEY}",
+            timeout=10
+        )
         data = r.json()
         if "price" in data:
             return float(data["price"])
         else:
             raise Exception(f"TwelveData Fehler: {data}")
-
     except Exception as e:
         log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
         return 0
