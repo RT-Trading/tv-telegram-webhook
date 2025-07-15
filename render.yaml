@@ -1,29 +1,16 @@
 services:
   - type: web
-    name: tv-telegram-webhook
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn main:app
-    plan: starter
-    envVars:
-      - key: TELEGRAM_BOT_TOKEN
-        fromEnvVar: TELEGRAM_BOT_TOKEN
-      - key: TELEGRAM_CHAT_ID
-        fromEnvVar: TELEGRAM_CHAT_ID
-
-  - type: worker
     name: trade-monitor
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python monitor.py
+    startCommand: python python\ all_in_one.py
     plan: starter
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         fromEnvVar: TELEGRAM_BOT_TOKEN
       - key: TELEGRAM_CHAT_ID
         fromEnvVar: TELEGRAM_CHAT_ID
-      - key: TWELVE_API_KEY
-        fromEnvVar: TWELVE_API_KEY
       - key: METALS_API_KEY
         fromEnvVar: METALS_API_KEY
-
+      - key: TWELVE_API_KEY
+        fromEnvVar: TWELVE_API_KEY
