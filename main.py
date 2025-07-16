@@ -60,9 +60,9 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
 
-🌟 *TP 1*: `{fmt.format(tp1)}`  
-🌟 *TP 2*: `{fmt.format(tp2)}`  
-🌟 *Full TP*: `{fmt.format(tp3)}`
+🎯 *TP 1*: `{fmt.format(tp1)}`  
+🎯 *TP 2*: `{fmt.format(tp2)}`  
+🎯 *Full TP*: `{fmt.format(tp3)}`
 
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
@@ -212,10 +212,10 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price >= tp1:
                 t["tp1_hit"] = True
-                alert("🌱 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
+                alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
             elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
                 t["tp2_hit"] = True
-                alert("🌱 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
+                alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
             elif t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
                 t["tp3_hit"] = True
                 alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
@@ -227,10 +227,10 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price <= tp1:
                 t["tp1_hit"] = True
-                alert("🌱 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
+                alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
             elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
                 t["tp2_hit"] = True
-                alert("🌱 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
+                alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
             elif t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
                 t["tp3_hit"] = True
                 alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
