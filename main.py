@@ -52,24 +52,20 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     fmt = f"{{:.{digits}f}}"
     direction = "🟢 *LONG* 📈" if side == 'long' else "🔴 *SHORT* 📉"
 
-    return f"""\
-🔔 *RT-Trading VIP* 🔔  
+    return f"""🔔 *RT-Trading VIP* 🔔  
 📊 *{symbol}*  
 {direction}
 
-\
 📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
 
-\
-🌟 *TP 1*: `{fmt.format(tp1)}`  
-🌟 *TP 2*: `{fmt.format(tp2)}`  
-🌟 *Full TP*: `{fmt.format(tp3)}`
+🎯 *TP 1*: `{fmt.format(tp1)}`  
+🎯 *TP 2*: `{fmt.format(tp2)}`  
+🎯 *Full TP*: `{fmt.format(tp3)}`
 
-\
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
-🔀 TP1 erreicht → *Breakeven setzen*.
+🔁 TP1 erreicht → *Breakeven setzen*.
 """
 
 def send_telegram(text, retry=True):
@@ -81,7 +77,7 @@ def send_telegram(text, retry=True):
             'parse_mode': 'Markdown'
         }
         r = requests.post(url, data=payload, timeout=10)
-        print("📱 Telegram Response:", r.status_code, r.text)
+        print("📡 Telegram Response:", r.status_code, r.text)
         if r.status_code != 200:
             raise Exception("Telegram-Fehler")
     except Exception as e:
@@ -208,7 +204,7 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price >= tp1:
                 t["tp1_hit"] = True
-                alert("🏆 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
+                alert("🥇 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
             elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
                 t["tp2_hit"] = True
                 alert("🥈 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
@@ -223,7 +219,7 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price <= tp1:
                 t["tp1_hit"] = True
-                alert("🏆 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
+                alert("🥇 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
             elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
                 t["tp2_hit"] = True
                 alert("🥈 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
@@ -242,6 +238,10 @@ def monitor_loop():
         except Exception as e:
             log_error(f"Hauptfehler: {e}")
         time.sleep(60)
+
+def start_monitor_delayed():
+    time.sleep(3)  # verhindert Render-Startfehler
+    monitor_loop()
 
 # =========== FLASK ROUTES ==============
 
@@ -279,4 +279,4 @@ def webhook():
 
 # ============ STARTUP ==============
 
-threading.Thread(target=monitor_loop, daemon=True).start()
+threading.Thread(target=start_monitor_delayed, daemon=True).start()
