@@ -285,6 +285,35 @@ def webhook():
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
+@app.route("/add_manual", methods=["POST"])
+def add_manual():
+    try:
+        data = request.get_json(force=True)
+
+        symbol = data.get("symbol", "").upper()
+        entry = float(data.get("entry", 0))
+        side = data.get("side", "").strip().lower()
+        sl = float(data.get("sl", 0))
+        tp1 = float(data.get("tp1", 0))
+        tp2 = float(data.get("tp2", 0))
+        tp3 = float(data.get("tp3", 0))
+
+        if not all([symbol, entry, side, sl, tp1, tp2, tp3]) or side not in ["long", "short"]:
+            return "❌ Ungültige Daten", 400
+
+        # Optional: Sofortige Telegram-Benachrichtigung
+        msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
+        send_telegram(msg)
+
+        # Speichern
+        save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
+        return "✅ Manuell hinzugefügt", 200
+
+    except Exception as e:
+        log_error(f"❌ Fehler beim manuellen Import: {e}")
+        return f"❌ Fehler: {e}", 500
+
+
 # ============ STARTUP ==============
 
 threading.Thread(target=start_monitor_delayed, daemon=True).start()
