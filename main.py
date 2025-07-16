@@ -52,20 +52,24 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
     fmt = f"{{:.{digits}f}}"
     direction = "🟢 *LONG* 📈" if side == 'long' else "🔴 *SHORT* 📉"
 
-    return f"""🔔 *RT-Trading VIP* 🔔  
+    return f"""\
+🔔 *RT-Trading VIP* 🔔  
 📊 *{symbol}*  
 {direction}
 
+\
 📍 *Entry*: `{fmt.format(entry)}`  
 🛑 *SL*: `{fmt.format(sl)}`
 
-🎯 *TP 1*: `{fmt.format(tp1)}`  
-🎯 *TP 2*: `{fmt.format(tp2)}`  
-🎯 *Full TP*: `{fmt.format(tp3)}`
+\
+🌟 *TP 1*: `{fmt.format(tp1)}`  
+🌟 *TP 2*: `{fmt.format(tp2)}`  
+🌟 *Full TP*: `{fmt.format(tp3)}`
 
+\
 ⚠️ *Keine Finanzberatung!*  
 📌 Achtet auf *Money Management*!  
-🔁 TP1 erreicht → *Breakeven setzen*.
+🔀 TP1 erreicht → *Breakeven setzen*.
 """
 
 def send_telegram(text, retry=True):
@@ -77,7 +81,7 @@ def send_telegram(text, retry=True):
             'parse_mode': 'Markdown'
         }
         r = requests.post(url, data=payload, timeout=10)
-        print("📡 Telegram Response:", r.status_code, r.text)
+        print("📱 Telegram Response:", r.status_code, r.text)
         if r.status_code != 200:
             raise Exception("Telegram-Fehler")
     except Exception as e:
@@ -197,38 +201,36 @@ def check_trades():
             continue
         def alert(msg):
             send_telegram(f"*{symbol}* | *{side.upper()}*\n{msg}\n💰 Preis: `{price:.2f}`")
-if side == "long":
-    if not t["sl_hit"] and price <= sl:
-        t["sl_hit"] = True
-        alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
-        t["closed"] = True
-    elif not t["tp1_hit"] and price >= tp1:
-        t["tp1_hit"] = True
-        alert("🥇 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
-    elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
-        t["tp2_hit"] = True
-        alert("🥈 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
-    elif t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
-        t["tp3_hit"] = True
-        alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💰🥳*")
-        t["closed"] = True
-
-elif side == "short":
-    if not t["sl_hit"] and price >= sl:
-        t["sl_hit"] = True
-        alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
-        t["closed"] = True
-    elif not t["tp1_hit"] and price <= tp1:
-        t["tp1_hit"] = True
-        alert("🥇 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
-    elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
-        t["tp2_hit"] = True
-        alert("🥈 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
-    elif t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
-        t["tp3_hit"] = True
-        alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💰🥳*")
-        t["closed"] = True
-
+        if side == "long":
+            if not t["sl_hit"] and price <= sl:
+                t["sl_hit"] = True
+                alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
+                t["closed"] = True
+            elif not t["tp1_hit"] and price >= tp1:
+                t["tp1_hit"] = True
+                alert("🏆 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
+            elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
+                t["tp2_hit"] = True
+                alert("🥈 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
+            elif t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
+                t["tp3_hit"] = True
+                alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💰🥳*")
+                t["closed"] = True
+        elif side == "short":
+            if not t["sl_hit"] and price >= sl:
+                t["sl_hit"] = True
+                alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
+                t["closed"] = True
+            elif not t["tp1_hit"] and price <= tp1:
+                t["tp1_hit"] = True
+                alert("🏆 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
+            elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
+                t["tp2_hit"] = True
+                alert("🥈 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
+            elif t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
+                t["tp3_hit"] = True
+                alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💰🥳*")
+                t["closed"] = True
         updated.append(t)
     save_trades(updated)
 
@@ -275,9 +277,6 @@ def webhook():
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
-
 # ============ STARTUP ==============
 
-# Startet den Trade-Monitor-Thread IMMER, auch wenn Gunicorn verwendet wird
 threading.Thread(target=monitor_loop, daemon=True).start()
-
