@@ -245,7 +245,7 @@ def monitor_loop():
             check_trades()
         except Exception as e:
             log_error(f"Hauptfehler: {e}")
-        time.sleep(60)
+        time.sleep(180)
 
 def start_monitor_delayed():
     time.sleep(3)  # verhindert Render-Startfehler
