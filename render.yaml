@@ -3,7 +3,7 @@ services:
     name: trade-monitor
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python python\ all_in_one.py
+    startCommand: python python\ main.py
     plan: starter
     envVars:
       - key: TELEGRAM_BOT_TOKEN
