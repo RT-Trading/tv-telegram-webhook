@@ -197,7 +197,7 @@ def check_trades():
             continue
         def alert(msg):
             send_telegram(f"*{symbol}* | *{side.upper()}*\n{msg}\n💰 Preis: `{price:.2f}`")
-        if side == "long":
+if side == "long":
     if not t["sl_hit"] and price <= sl:
         t["sl_hit"] = True
         alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
