@@ -204,13 +204,13 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price >= tp1:
                 t["tp1_hit"] = True
-                alert("🎯 *TP1 erreicht – BE setzen oder Trade managen.*")
+                alert("🎯 *TP1 erreicht – BE setzen oder Trade managen.Wir machen uns auf den Weg zu TP 2🎉 *")
             elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
                 t["tp2_hit"] = True
-                alert("📈 *TP2 erreicht – Full TP in Sicht!*")
+                alert("🎯 *TP2 erreicht – und schon geht es weiter 🎉 - Full TP in Sicht!*")
             elif t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
                 t["tp3_hit"] = True
-                alert("🎉 *Full TP erreicht – Glückwunsch!*")
+               alert("🎯🎉 *Full TP erreicht – Glückwunsch an alle!🎉*")
                 t["closed"] = True
         elif side == "short":
             if not t["sl_hit"] and price >= sl:
@@ -219,13 +219,13 @@ def check_trades():
                 t["closed"] = True
             elif not t["tp1_hit"] and price <= tp1:
                 t["tp1_hit"] = True
-                alert("🎯 *TP1 erreicht – BE setzen oder Trade managen.*")
+                alert("🎯 *TP1 erreicht – BE setzen oder Trade managen.Wir machen uns auf den Weg zu TP 2🎉 *")
             elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
                 t["tp2_hit"] = True
-                alert("📈 *TP2 erreicht – Full TP in Sicht!*")
+                alert("🎯 *TP2 erreicht – und schon geht es weiter 🎉 - Full TP in Sicht!*")
             elif t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
                 t["tp3_hit"] = True
-                alert("🎉 *Full TP erreicht – Glückwunsch!*")
+                alert("🎯🎉 *Full TP erreicht – Glückwunsch an alle!🎉*")
                 t["closed"] = True
         updated.append(t)
     save_trades(updated)
