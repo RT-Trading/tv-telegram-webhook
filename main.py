@@ -273,8 +273,9 @@ def webhook():
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
+
 # ============ STARTUP ==============
 
-if __name__ == "__main__":
-    threading.Thread(target=monitor_loop, daemon=True).start()
-    app.run(host="0.0.0.0", port=5000)
+# Startet den Trade-Monitor-Thread IMMER, auch wenn Gunicorn verwendet wird
+threading.Thread(target=monitor_loop, daemon=True).start()
+
