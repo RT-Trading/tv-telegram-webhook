@@ -135,6 +135,25 @@ def log_error(text):
 
 # ========== PREISABFRAGE =============
 
+# ========== SYMBOL-MAPPING FÜR TWELVE DATA ==========
+
+def convert_symbol_for_twelve(symbol):
+    symbol_map = {
+        "XAUUSD": "XAU/USD",
+        "XAGUSD": "XAG/USD",
+        "SILVER": "XAG/USD",
+        "GOLD": "XAU/USD",
+        "BTCUSD": "BTC/USD",
+        "ETHUSD": "ETH/USD",
+        "US30": "DJI",
+        "US500": "SPX",
+        "NAS100": "NDX",
+        "GER40": "DAX"
+    }
+    return symbol_map.get(symbol.upper(), symbol)
+
+# ========== PREISABFRAGE =============
+
 def get_price(symbol):
     symbol = symbol.upper()
     COINGECKO_MAP = {
@@ -144,6 +163,7 @@ def get_price(symbol):
         "DOGEUSD": "dogecoin"
     }
     try:
+        # === CoinGecko für Krypto ===
         if symbol in COINGECKO_MAP:
             r = requests.get(
                 f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd",
@@ -151,6 +171,7 @@ def get_price(symbol):
             )
             return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
 
+        # === MetalsAPI für Gold/Silber ===
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             base = "XAU" if "XAU" in symbol else "XAG"
             try:
@@ -165,20 +186,23 @@ def get_price(symbol):
                     raise Exception(f"MetalsAPI Fehler: {data}")
             except Exception as e:
                 log_error(f"⚠️ MetalsAPI Fallback für {symbol}: {e}")
-                return 2333.33  # statischer Notfallpreis
+                # Weiter mit Twelve Data versuchen
 
+        # === Twelve Data als Fallback ===
+        symbol_twelve = convert_symbol_for_twelve(symbol)
         r = requests.get(
-            f"https://api.twelvedata.com/price?symbol={symbol}&apikey={TWELVE_API_KEY}",
+            f"https://api.twelvedata.com/price?symbol={symbol_twelve}&apikey={TWELVE_API_KEY}",
             timeout=10
         )
         data = r.json()
-        if "price" in data:
+        if "price" in data and isinstance(data["price"], str):
             return float(data["price"])
         else:
             raise Exception(f"Twelve Data Fehler: {data}")
     except Exception as e:
         log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
         return 0
+
 
 # =========== MONITOR LOGIK ===========
 
