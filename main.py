@@ -216,9 +216,13 @@ def check_trades():
             continue
 
         symbol = t.get("symbol", "").upper()
+        entry = t.get("entry")
         sl = t.get("sl")
         side = t.get("side")
-        tp1, tp2, tp3 = t.get("tp1"), t.get("tp2"), t.get("tp3")
+        tp1 = t.get("tp1")
+        tp2 = t.get("tp2")
+        tp3 = t.get("tp3")
+
         t.setdefault("tp1_hit", False)
         t.setdefault("tp2_hit", False)
         t.setdefault("tp3_hit", False)
@@ -230,48 +234,52 @@ def check_trades():
             updated.append(t)
             continue
 
-        def alert(msg, show_price=True):
+        # Neue alert-Funktion ohne Preis
+        def alert(msg):
             text = f"*{symbol}* | *{side.upper()}*\n{msg}"
-            if show_price:
-                text += f"\n💰 Preis: `{price:.2f}`"
             send_telegram(text)
 
         if side == "long":
             if not t["tp1_hit"] and price >= tp1:
                 t["tp1_hit"] = True
-                alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀", show_price=False)
+                alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
             elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
                 t["tp2_hit"] = True
-                alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨", show_price=False)
+                alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
             elif t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
                 t["tp3_hit"] = True
-                alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*", show_price=False)
+                alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
                 t["closed"] = True
             elif not t["tp1_hit"] and not t["sl_hit"] and price <= sl:
                 t["sl_hit"] = True
                 alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
                 t["closed"] = True
+            elif t["tp1_hit"] and not t["closed"] and price <= entry:
+                alert("💰 *Trade teilweise im Gewinn geschlossen – TP1/TP2 wurden erreicht, Rest auf Entry beendet.*")
+                t["closed"] = True
 
         elif side == "short":
             if not t["tp1_hit"] and price <= tp1:
                 t["tp1_hit"] = True
-                alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀", show_price=False)
+                alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
             elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
                 t["tp2_hit"] = True
-                alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨", show_price=False)
+                alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
             elif t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
                 t["tp3_hit"] = True
-                alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*", show_price=False)
+                alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
                 t["closed"] = True
             elif not t["tp1_hit"] and not t["sl_hit"] and price >= sl:
                 t["sl_hit"] = True
                 alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
                 t["closed"] = True
+            elif t["tp1_hit"] and not t["closed"] and price >= entry:
+                alert("💰 *Trade teilweise im Gewinn geschlossen – TP1/TP2 wurden erreicht, Rest auf Entry beendet.*")
+                t["closed"] = True
 
         updated.append(t)
 
     save_trades(updated)
-
 
 def monitor_loop():
     send_telegram("✅ *Trade-Monitor gestartet*")
