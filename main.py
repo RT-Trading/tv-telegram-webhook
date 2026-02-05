@@ -8,19 +8,26 @@ import requests
 
 app = Flask(__name__)
 
-# === ENV-VARIABLEN ===
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-METALS_API_KEY = os.environ.get("METALS_API_KEY")
-TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY")
+# =============================================================================
+# ENV
+# =============================================================================
+BOT_TOKEN      = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+CHAT_ID        = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+METALS_API_KEY = os.environ.get("METALS_API_KEY", "").strip()
+TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY", "").strip()
 
-# =========  GRUND-FUNKTIONEN ===========
+# Optional (empfohlen): Secret-Key gegen fremde Webhook-Calls
+# In Render als ENV setzen: RT_SECRET=irgendein_geheimes_passwort
+RT_SECRET = os.environ.get("RT_SECRET", "").strip()
 
-def calc_sl(entry, side):
+# =============================================================================
+# GRUND-FUNKTIONEN
+# =============================================================================
+def calc_sl(entry: float, side: str) -> float:
     risk_pct = 0.005
-    return entry * (1 - risk_pct) if side == 'long' else entry * (1 + risk_pct)
+    return entry * (1 - risk_pct) if side == "long" else entry * (1 + risk_pct)
 
-def calc_tp(entry, sl, side, symbol):
+def calc_tp(entry: float, sl: float, side: str, symbol: str):
     metals = ["XAUUSD", "SILVER"]
     risk = abs(entry - sl)
     if symbol in metals:
@@ -30,15 +37,15 @@ def calc_tp(entry, sl, side, symbol):
         else:
             return entry * (1 - tp_pct[0]), entry * (1 - tp_pct[1]), entry * (1 - tp_pct[2])
     else:
-        if side == 'long':
+        if side == "long":
             return entry + 2 * risk, entry + 3.6 * risk, entry + 5.6 * risk
         else:
             return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
-def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
-    five_digits = ["EURUSD", "GBPUSD", "GBPJPY"]
+def format_message(symbol: str, entry: float, sl: float, tp1: float, tp2: float, tp3: float, side: str) -> str:
+    five_digits  = ["EURUSD", "GBPUSD", "GBPJPY"]
     three_digits = ["USDJPY"]
-    two_digits = ["BTCUSD", "NAS100", "XAUUSD", "SILVER", "US30", "US500", "GER40"]
+    two_digits   = ["BTCUSD", "NAS100", "XAUUSD", "SILVER", "US30", "US500", "GER40"]
 
     if symbol in five_digits:
         digits = 5
@@ -50,7 +57,7 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
         digits = 4
 
     fmt = f"{{:.{digits}f}}"
-    direction = "🟢 *LONG* 📈" if side == 'long' else "🔴 *SHORT* 📉"
+    direction = "🟢 *LONG* 📈" if side == "long" else "🔴 *SHORT* 📉"
 
     return f"""\
 🔔 *RT-Trading VIP* 🔔  
@@ -69,13 +76,16 @@ def format_message(symbol, entry, sl, tp1, tp2, tp3, side):
 🔀 TP1 erreicht → *Breakeven setzen*.
 """
 
-def send_telegram(text, retry=True):
+def send_telegram(text: str, retry: bool = True):
     try:
+        if not BOT_TOKEN or not CHAT_ID:
+            raise Exception("TELEGRAM_BOT_TOKEN oder TELEGRAM_CHAT_ID fehlt")
+
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload = {
-            'chat_id': CHAT_ID,
-            'text': text,
-            'parse_mode': 'Markdown'
+            "chat_id": CHAT_ID,
+            "text": text,
+            "parse_mode": "Markdown"
         }
         r = requests.post(url, data=payload, timeout=10)
         print("📱 Telegram Response:", r.status_code, r.text)
@@ -85,30 +95,6 @@ def send_telegram(text, retry=True):
         print(f"Telegram Fehler: {e}")
         if retry:
             send_telegram(text, retry=False)
-
-def save_trade(symbol, entry, sl, tp1, tp2, tp3, side):
-    trade = {
-        "symbol": symbol,
-        "entry": entry,
-        "sl": sl,
-        "tp1": tp1,
-        "tp2": tp2,
-        "tp3": tp3,
-        "side": side,
-        "tp1_hit": False,
-        "tp2_hit": False,
-        "tp3_hit": False,
-        "sl_hit": False,
-        "closed": False
-    }
-    try:
-        with open("trades.json", "r") as f:
-            trades = json.load(f)
-    except FileNotFoundError:
-        trades = []
-    trades.append(trade)
-    with open("trades.json", "w") as f:
-        json.dump(trades, f, indent=2)
 
 def load_trades():
     if not os.path.exists("trades.json"):
@@ -127,17 +113,40 @@ def save_trades(trades):
     except Exception as e:
         print(f"Fehler beim Speichern von trades.json: {e}")
 
-def log_error(text):
+def save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta=None):
+    trade = {
+        "symbol": symbol,
+        "entry": entry,
+        "sl": sl,
+        "tp1": tp1,
+        "tp2": tp2,
+        "tp3": tp3,
+        "side": side,
+        "tp1_hit": False,
+        "tp2_hit": False,
+        "tp3_hit": False,
+        "sl_hit": False,
+        "closed": False,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "meta": meta or {}
+    }
+    trades = load_trades()
+    trades.append(trade)
+    save_trades(trades)
+
+def log_error(text: str):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open("errors.log", "a") as f:
-        f.write(f"[{now}] {text}\n")
+    try:
+        with open("errors.log", "a") as f:
+            f.write(f"[{now}] {text}\n")
+    except Exception:
+        pass
     print(f"⚠️ {text}")
 
-# ========== PREISABFRAGE =============
-
-# ========== SYMBOL-MAPPING FÜR TWELVE DATA ==========
-
-def convert_symbol_for_twelve(symbol):
+# =============================================================================
+# SYMBOL-MAPPING FÜR TWELVE DATA
+# =============================================================================
+def convert_symbol_for_twelve(symbol: str) -> str:
     symbol_map = {
         "XAUUSD": "XAU/USD",
         "XAGUSD": "XAG/USD",
@@ -152,9 +161,10 @@ def convert_symbol_for_twelve(symbol):
     }
     return symbol_map.get(symbol.upper(), symbol)
 
-# ========== PREISABFRAGE =============
-
-def get_price(symbol):
+# =============================================================================
+# PREISABFRAGE
+# =============================================================================
+def get_price(symbol: str) -> float:
     symbol = symbol.upper()
     COINGECKO_MAP = {
         "BTCUSD": "bitcoin",
@@ -174,21 +184,25 @@ def get_price(symbol):
         # === MetalsAPI für Gold/Silber ===
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             base = "XAU" if "XAU" in symbol else "XAG"
-            try:
-                r = requests.get(
-                    f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD",
-                    timeout=10
-                )
-                data = r.json()
-                if data.get("success") and "rates" in data and "USD" in data["rates"]:
-                    return float(data["rates"]["USD"])
-                else:
-                    raise Exception(f"MetalsAPI Fehler: {data}")
-            except Exception as e:
-                log_error(f"⚠️ MetalsAPI Fallback für {symbol}: {e}")
-                # Weiter mit Twelve Data versuchen
+            if METALS_API_KEY:
+                try:
+                    r = requests.get(
+                        f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD",
+                        timeout=10
+                    )
+                    data = r.json()
+                    if data.get("success") and "rates" in data and "USD" in data["rates"]:
+                        return float(data["rates"]["USD"])
+                    else:
+                        raise Exception(f"MetalsAPI Fehler: {data}")
+                except Exception as e:
+                    log_error(f"⚠️ MetalsAPI Fallback für {symbol}: {e}")
+            # Fallback: TwelveData
 
-        # === Twelve Data als Fallback ===
+        # === Twelve Data Fallback ===
+        if not TWELVE_API_KEY:
+            raise Exception("TWELVE_API_KEY fehlt (Fallback nicht möglich)")
+
         symbol_twelve = convert_symbol_for_twelve(symbol)
         r = requests.get(
             f"https://api.twelvedata.com/price?symbol={symbol_twelve}&apikey={TWELVE_API_KEY}",
@@ -197,15 +211,45 @@ def get_price(symbol):
         data = r.json()
         if "price" in data and isinstance(data["price"], str):
             return float(data["price"])
-        else:
-            raise Exception(f"Twelve Data Fehler: {data}")
+        raise Exception(f"Twelve Data Fehler: {data}")
+
     except Exception as e:
         log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
-        return 0
+        return 0.0
 
+# =============================================================================
+# NORMALIZER: side / cmd / entry(price)
+# =============================================================================
+def normalize_side(raw) -> str:
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    u = s.upper()
+    if u in ["LONG", "BUY", "BULL"]:
+        return "long"
+    if u in ["SHORT", "SELL", "BEAR"]:
+        return "short"
+    # falls jemand schon "long"/"short" sendet:
+    l = s.lower()
+    if l in ["long", "short"]:
+        return l
+    return ""
 
-# =========== MONITOR LOGIK ===========
+def parse_entry(data: dict) -> float:
+    # akzeptiert: entry oder price
+    v = data.get("entry", None)
+    if v is None:
+        v = data.get("price", None)
+    if v is None:
+        v = data.get("close", None)
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
 
+# =============================================================================
+# MONITOR LOGIK
+# =============================================================================
 def check_trades():
     trades = load_trades()
     updated = []
@@ -215,13 +259,13 @@ def check_trades():
             updated.append(t)
             continue
 
-        symbol = t.get("symbol", "").upper()
-        entry = t.get("entry")
-        sl = t.get("sl")
-        side = t.get("side")
-        tp1 = t.get("tp1")
-        tp2 = t.get("tp2")
-        tp3 = t.get("tp3")
+        symbol = (t.get("symbol", "") or "").upper()
+        entry  = t.get("entry")
+        sl     = t.get("sl")
+        side   = t.get("side")
+        tp1    = t.get("tp1")
+        tp2    = t.get("tp2")
+        tp3    = t.get("tp3")
 
         t.setdefault("tp1_hit", False)
         t.setdefault("tp2_hit", False)
@@ -234,9 +278,8 @@ def check_trades():
             updated.append(t)
             continue
 
-        # Neue alert-Funktion ohne Preis
-        def alert(msg):
-            text = f"*{symbol}* | *{side.upper()}*\n{msg}"
+        def alert(msg: str):
+            text = f"*{symbol}* | *{str(side).upper()}*\n{msg}"
             send_telegram(text)
 
         if side == "long":
@@ -294,8 +337,9 @@ def start_monitor_delayed():
     time.sleep(3)  # verhindert Render-Startfehler
     monitor_loop()
 
-# =========== FLASK ROUTES ==============
-
+# =============================================================================
+# FLASK ROUTES
+# =============================================================================
 @app.route("/")
 def health():
     return "✅ Monitor läuft", 200
@@ -303,27 +347,49 @@ def health():
 @app.route("/trades", methods=["GET"])
 def show_trades():
     try:
-        with open("trades.json", "r") as f:
-            return f.read(), 200, {'Content-Type': 'application/json'}
+        trades = load_trades()
+        return json.dumps(trades, indent=2), 200, {"Content-Type": "application/json"}
     except Exception as e:
         return f"Fehler beim Laden: {e}", 500
 
-@app.route('/webhook', methods=['POST'])
+@app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
         print("📬 Empfangen:", data)
-        entry = float(data.get("entry", 0))
-        side = (data.get("side") or data.get("direction") or "").strip().lower()
+
+        # Optional Security
+        if RT_SECRET:
+            if str(data.get("key", "")).strip() != RT_SECRET:
+                return "❌ Unauthorized", 401
+
+        # cmd optional: du sendest cmd:"ENTRY"
+        cmd = (data.get("cmd") or "").strip().upper()
+        if cmd and cmd != "ENTRY":
+            return "✅ Ignored (cmd)", 200
+
         symbol = str(data.get("symbol", "")).strip().upper()
-        if not entry or side not in ["long", "short"] or not symbol:
-            raise ValueError("❌ Ungültige Daten")
+        side   = normalize_side(data.get("side") or data.get("direction"))
+        entry  = parse_entry(data)
+
+        if not symbol or side not in ["long", "short"] or entry <= 0:
+            raise ValueError("❌ Ungültige Daten (symbol/side/entry)")
+
         sl = calc_sl(entry, side)
         tp1, tp2, tp3 = calc_tp(entry, sl, side, symbol)
+
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
         send_telegram(msg)
-        save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
+
+        meta = {
+            "tf": data.get("tf"),
+            "time": data.get("time"),
+            "raw": {"cmd": cmd}
+        }
+        save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta=meta)
+
         return "✅ OK", 200
+
     except Exception as e:
         print("❌ Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
@@ -331,33 +397,36 @@ def webhook():
 @app.route("/add_manual", methods=["POST"])
 def add_manual():
     try:
-        data = request.get_json(force=True)
+        data = request.get_json(force=True) or {}
 
-        symbol = data.get("symbol", "").upper()
-        entry = float(data.get("entry", 0))
-        side = data.get("side", "").strip().lower()
-        sl = float(data.get("sl", 0))
-        tp1 = float(data.get("tp1", 0))
-        tp2 = float(data.get("tp2", 0))
-        tp3 = float(data.get("tp3", 0))
+        symbol = str(data.get("symbol", "")).strip().upper()
+        side   = normalize_side(data.get("side"))
+        entry  = float(data.get("entry", 0) or 0)
+
+        sl  = float(data.get("sl", 0) or 0)
+        tp1 = float(data.get("tp1", 0) or 0)
+        tp2 = float(data.get("tp2", 0) or 0)
+        tp3 = float(data.get("tp3", 0) or 0)
 
         if not all([symbol, entry, side, sl, tp1, tp2, tp3]) or side not in ["long", "short"]:
             return "❌ Ungültige Daten", 400
 
-        # Optional: Sofortige Telegram-Benachrichtigung
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
         send_telegram(msg)
 
-        # Speichern
-        save_trade(symbol, entry, sl, tp1, tp2, tp3, side)
+        save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta={"manual": True})
         return "✅ Manuell hinzugefügt", 200
 
     except Exception as e:
         log_error(f"❌ Fehler beim manuellen Import: {e}")
         return f"❌ Fehler: {e}", 500
 
-
-# ============ STARTUP ==============
-
+# =============================================================================
+# STARTUP
+# =============================================================================
 threading.Thread(target=start_monitor_delayed, daemon=True).start()
 
+# Render braucht oft PORT
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "10000"))
+    app.run(host="0.0.0.0", port=port)
