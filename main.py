@@ -6,9 +6,6 @@ from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 import requests
 
-# =============================================================================
-# APP
-# =============================================================================
 app = Flask(__name__)
 
 # =============================================================================
@@ -19,52 +16,60 @@ CHAT_ID        = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 METALS_API_KEY = os.environ.get("METALS_API_KEY", "").strip()
 TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY", "").strip()
 
-# Optional Security (empfohlen): Secret-Key gegen fremde Webhook-Calls
-# In Render als ENV setzen: RT_SECRET=irgendein_geheimes_passwort
-RT_SECRET = os.environ.get("RT_SECRET", "").strip()
+# Security: Du sendest in TV "key":"RTBOT" -> setze RT_SECRET=RTBOT in Render
+RT_SECRET  = os.environ.get("RT_SECRET", "").strip()
+
+# Optional getrennte Secrets (wenn du willst)
+VIP_SECRET = os.environ.get("VIP_SECRET", "").strip() or RT_SECRET
+BOT_SECRET = os.environ.get("BOT_SECRET", "").strip() or RT_SECRET
 
 # =============================================================================
-# STORAGE FILES (ALT + NEU)
+# FILES (ALT + NEU)
 # =============================================================================
 TRADES_FILE        = os.environ.get("TRADES_FILE", "trades.json").strip()
 ERRORS_FILE        = os.environ.get("ERRORS_FILE", "errors.log").strip()
 
-# BOT SIGNAL HUB (NEU)
 BOT_SIGNALS_FILE   = os.environ.get("BOT_SIGNALS_FILE", "bot_signals.json").strip()
 BOT_SIGNALS_MAX    = int(os.environ.get("BOT_SIGNALS_MAX", "3000"))
 BOT_STATE_FILE     = os.environ.get("BOT_STATE_FILE", "bot_state.json").strip()
 BOT_CLIENTS_FILE   = os.environ.get("BOT_CLIENTS_FILE", "bot_clients.json").strip()
 
-# Monitor loop (ALT) - optional steuerbar, default ON (wie dein Script)
 RUN_MONITOR        = os.environ.get("RUN_MONITOR", "1").strip() != "0"
 
 # =============================================================================
 # LOCKS
 # =============================================================================
-_lock_trades   = threading.RLock()
-_lock_bot      = threading.RLock()
-_lock_state    = threading.RLock()
-_lock_clients  = threading.RLock()
+_lock_trades  = threading.RLock()
+_lock_bot     = threading.RLock()
+_lock_state   = threading.RLock()
+_lock_clients = threading.RLock()
 
 # =============================================================================
-# HELPERS
+# BASICS
 # =============================================================================
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+def log_error(text: str):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(ERRORS_FILE, "a") as f:
+            f.write(f"[{now}] {text}\n")
+    except Exception:
+        pass
+    print(f"⚠️ {text}")
 
 def _safe_read_json(path, default):
     if not os.path.exists(path):
         return default
     try:
         with open(path, "r") as f:
-            data = json.load(f)
-            return data
+            return json.load(f)
     except Exception as e:
         log_error(f"JSON Read Fehler {path}: {e}")
         return default
 
 def _safe_write_json_atomic(path, data):
-    # atomic write (gegen corrupted json)
     tmp = path + ".tmp"
     try:
         with open(tmp, "w") as f:
@@ -80,19 +85,14 @@ def _safe_write_json_atomic(path, data):
             pass
         return False
 
-def log_error(text: str):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    try:
-        with open(ERRORS_FILE, "a") as f:
-            f.write(f"[{now}] {text}\n")
-    except Exception:
-        pass
-    print(f"⚠️ {text}")
-
-def require_secret(data: dict):
-    # gleiche Security wie bei dir: wenn RT_SECRET gesetzt ist, muss key passen
-    if RT_SECRET:
-        if str(data.get("key", "")).strip() != RT_SECRET:
+def require_secret(data: dict, purpose: str):
+    """
+    purpose: "vip" oder "bot"
+    Wenn VIP_SECRET/BOT_SECRET gesetzt ist -> data["key"] muss passen.
+    """
+    secret = VIP_SECRET if purpose == "vip" else BOT_SECRET
+    if secret:
+        if str(data.get("key", "")).strip() != secret:
             return False
     return True
 
@@ -124,8 +124,38 @@ def parse_float(v):
         return None
 
 def parse_entry(data: dict) -> float:
-    # akzeptiert: entry oder price oder close
-    return parse_float(data.get("entry")) or parse_float(data.get("price")) or parse_float(data.get("close")) or 0.0
+    # passt auf deine Alerts: entweder "price":"{{close}}" ODER "entry":"{{plot("entry")}}"
+    return (
+        parse_float(data.get("entry"))
+        or parse_float(data.get("price"))
+        or parse_float(data.get("close"))
+        or 0.0
+    )
+
+def normalize_symbol_tv(symbol: str) -> str:
+    """
+    TradingView {{ticker}} ist meist clean, aber wir machen es robust:
+    - entfernt Prefix "OANDA:EURUSD" -> "EURUSD"
+    - trim/upper
+    - vereinheitlicht ein paar Synonyme
+    """
+    s = (symbol or "").strip()
+    if ":" in s:
+        s = s.split(":")[-1]
+    s = s.upper().replace(" ", "")
+
+    # Synonyme (optional)
+    syn = {
+        "GOLD": "XAUUSD",
+        "SILVER": "XAGUSD",
+        "XAUUSD": "XAUUSD",
+        "XAGUSD": "XAGUSD",
+        "NAS100": "NAS100",
+        "US100": "US100",
+        "US30": "US30",
+        "GER40": "GER40",
+    }
+    return syn.get(s, s)
 
 # =============================================================================
 # TELEGRAM (ALT)
@@ -136,11 +166,7 @@ def send_telegram(text: str, retry: bool = True):
             raise Exception("TELEGRAM_BOT_TOKEN oder TELEGRAM_CHAT_ID fehlt")
 
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": CHAT_ID,
-            "text": text,
-            "parse_mode": "Markdown"
-        }
+        payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
         r = requests.post(url, data=payload, timeout=10)
         print("📱 Telegram Response:", r.status_code, r.text)
         if r.status_code != 200:
@@ -151,7 +177,7 @@ def send_telegram(text: str, retry: bool = True):
             send_telegram(text, retry=False)
 
 # =============================================================================
-# TRADES (ALT – Funktionalität bleibt)
+# TRADES (ALT)
 # =============================================================================
 def load_trades():
     with _lock_trades:
@@ -184,14 +210,14 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta=None):
     save_trades(trades)
 
 # =============================================================================
-# ALT – NICHT ÄNDERN (deine Logik beibehalten)
+# ALT – SL/TP/MSG (funktional gleich, nur XAGUSD als Metal ergänzt)
 # =============================================================================
 def calc_sl(entry: float, side: str) -> float:
     risk_pct = 0.005
     return entry * (1 - risk_pct) if side == "long" else entry * (1 + risk_pct)
 
 def calc_tp(entry: float, sl: float, side: str, symbol: str):
-    metals = ["XAUUSD", "SILVER"]
+    metals = ["XAUUSD", "XAGUSD", "SILVER", "GOLD"]
     risk = abs(entry - sl)
     if symbol in metals:
         tp_pct = [0.004, 0.008, 0.012]
@@ -208,7 +234,7 @@ def calc_tp(entry: float, sl: float, side: str, symbol: str):
 def format_message(symbol: str, entry: float, sl: float, tp1: float, tp2: float, tp3: float, side: str) -> str:
     five_digits  = ["EURUSD", "GBPUSD", "GBPJPY"]
     three_digits = ["USDJPY"]
-    two_digits   = ["BTCUSD", "NAS100", "XAUUSD", "SILVER", "US30", "US500", "GER40"]
+    two_digits   = ["BTCUSD", "NAS100", "XAUUSD", "XAGUSD", "SILVER", "US30", "US500", "GER40"]
 
     if symbol in five_digits:
         digits = 5
@@ -400,7 +426,7 @@ def start_monitor_delayed():
     monitor_loop()
 
 # =============================================================================
-# BOT SIGNAL HUB (NEU – robust + aktivierbar + next/ack)
+# BOT SIGNAL HUB (NEU)
 # =============================================================================
 def load_bot_signals():
     with _lock_bot:
@@ -442,10 +468,7 @@ def remember_client_ack(client_id: str, sig_id: str):
     if not client_id:
         return
     d = load_clients()
-    d[client_id] = {
-        "last_ack_id": sig_id,
-        "acked_at": utc_now_iso()
-    }
+    d[client_id] = {"last_ack_id": sig_id, "acked_at": utc_now_iso()}
     save_clients(d)
 
 def get_client_last_ack(client_id: str):
@@ -497,27 +520,23 @@ def next_signal_for_client(client_id: str):
 
     last_ack = get_client_last_ack(client_id)
     if not last_ack:
-        # wenn Client noch nie acked hat -> gib das letzte Signal (oder das erste)
         return signals[-1]
 
-    # finde das acked Signal in der Liste
     idx = -1
     for i, s in enumerate(signals):
         if s.get("id") == last_ack:
             idx = i
             break
 
-    # wenn ack-id nicht mehr existiert (wegen trimming) -> gib das letzte Signal
     if idx < 0:
         return signals[-1]
 
-    # next = nach ack
     if idx + 1 < len(signals):
         return signals[idx + 1]
     return None
 
 # =============================================================================
-# FLASK ROUTES
+# ROUTES
 # =============================================================================
 @app.route("/")
 def health():
@@ -531,26 +550,29 @@ def show_trades():
     except Exception as e:
         return f"Fehler beim Laden: {e}", 500
 
-# ✅ ALT /webhook bleibt funktional identisch (VIP / Telegram)
+# ---------------------------------------------------------------------
+# VIP: /webhook (dein "RT Entry Long/Short (WEBHOOK)")
+# Payload: {"key":"RTBOT","cmd":"ENTRY","side":"LONG","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}","time":"{{time}}"}
+# ---------------------------------------------------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         data = request.get_json(force=True) or {}
-        print("📬 Empfangen:", data)
+        print("📬 VIP Webhook empfangen:", data)
 
-        if not require_secret(data):
+        if not require_secret(data, "vip"):
             return "❌ Unauthorized", 401
 
         cmd = (data.get("cmd") or "").strip().upper()
         if cmd and cmd != "ENTRY":
             return "✅ Ignored (cmd)", 200
 
-        symbol = str(data.get("symbol", "")).strip().upper()
+        symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
         side   = normalize_side(data.get("side") or data.get("direction"))
         entry  = parse_entry(data)
 
         if not symbol or side not in ["long", "short"] or entry <= 0:
-            raise ValueError("❌ Ungültige Daten (symbol/side/entry)")
+            return "❌ Ungültige Daten (symbol/side/entry)", 400
 
         sl = calc_sl(entry, side)
         tp1, tp2, tp3 = calc_tp(entry, sl, side, symbol)
@@ -558,17 +580,13 @@ def webhook():
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
         send_telegram(msg)
 
-        meta = {
-            "tf": data.get("tf"),
-            "time": data.get("time"),
-            "raw": {"cmd": cmd}
-        }
+        meta = {"tf": data.get("tf"), "time": data.get("time"), "raw": {"cmd": cmd}}
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta=meta)
 
         return "✅ OK", 200
 
     except Exception as e:
-        print("❌ Fehler:", str(e))
+        print("❌ VIP Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
 @app.route("/add_manual", methods=["POST"])
@@ -576,7 +594,7 @@ def add_manual():
     try:
         data = request.get_json(force=True) or {}
 
-        symbol = str(data.get("symbol", "")).strip().upper()
+        symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
         side   = normalize_side(data.get("side"))
         entry  = float(data.get("entry", 0) or 0)
 
@@ -598,20 +616,17 @@ def add_manual():
         log_error(f"❌ Fehler beim manuellen Import: {e}")
         return f"❌ Fehler: {e}", 500
 
-# =============================================================================
-# NEU: BOT ROUTES
-# =============================================================================
+# ---------------------------------------------------------------------
+# BOT: Status / Toggle
+# ---------------------------------------------------------------------
 @app.route("/bot_status", methods=["GET"])
 def bot_status():
-    st = load_bot_state()
-    return jsonify(st), 200
+    return jsonify(load_bot_state()), 200
 
 @app.route("/bot_toggle", methods=["POST"])
 def bot_toggle():
-    # Aktivieren/Deaktivieren des Bot-Tradings (nicht VIP!)
     data = request.get_json(force=True) or {}
-
-    if not require_secret(data):
+    if not require_secret(data, "bot"):
         return "❌ Unauthorized", 401
 
     st = load_bot_state()
@@ -620,71 +635,72 @@ def bot_toggle():
     save_bot_state(st)
     return jsonify(st), 200
 
+# ---------------------------------------------------------------------
+# BOT: Signale lesen
+# ---------------------------------------------------------------------
 @app.route("/bot_signals", methods=["GET"])
 def bot_signals_get():
     try:
         signals = load_bot_signals()
-        # optional: ?limit=200
         try:
             limit = int(request.args.get("limit", "200"))
         except Exception:
             limit = 200
         limit = max(1, min(5000, limit))
-        out = signals[-limit:]
-        return json.dumps(out, indent=2), 200, {"Content-Type": "application/json"}
+        return json.dumps(signals[-limit:], indent=2), 200, {"Content-Type": "application/json"}
     except Exception as e:
         return f"Fehler: {e}", 500
 
+# ---------------------------------------------------------------------
+# BOT: next/ack (damit ein Client nicht dauernd das gleiche Signal bekommt)
+# ---------------------------------------------------------------------
 @app.route("/bot_next", methods=["GET"])
 def bot_next():
-    # Client holt "nächstes" Signal (nach last_ack_id)
     client_id = str(request.args.get("client", "")).strip()
     sig = next_signal_for_client(client_id)
-    if not sig:
-        return jsonify({"ok": True, "signal": None}), 200
     return jsonify({"ok": True, "signal": sig}), 200
 
 @app.route("/bot_ack", methods=["POST"])
 def bot_ack():
-    # Client bestätigt Signal-ID, damit /bot_next danach das nächste liefert
     data = request.get_json(force=True) or {}
-    if not require_secret(data):
+    if not require_secret(data, "bot"):
         return "❌ Unauthorized", 401
 
     client_id = str(data.get("client", "")).strip()
     sig_id    = str(data.get("id", "")).strip()
-
     if not client_id or not sig_id:
         return "❌ client/id fehlt", 400
 
     remember_client_ack(client_id, sig_id)
     return jsonify({"ok": True, "client": client_id, "acked": sig_id}), 200
 
+# ---------------------------------------------------------------------
+# BOT: /bot_webhook (dein "RT BOT Entry Long/Short")
+# Payload: {"key":"RTBOT","cmd":"ENTRY","side":"LONG","symbol":"{{ticker}}","tf":"{{interval}}","entry":"{{plot("entry")}}","slf":"{{plot("slf")}}","time":"{{time}}"}
+# ---------------------------------------------------------------------
 @app.route("/bot_webhook", methods=["POST"])
 def bot_webhook():
-    # TradingView -> BOT ENTRY Signale speichern (keine Telegram Spam)
     try:
         data = request.get_json(force=True) or {}
         print("🤖 BOT Webhook empfangen:", data)
 
-        if not require_secret(data):
+        if not require_secret(data, "bot"):
             return "❌ Unauthorized", 401
 
         st = load_bot_state()
         if not st.get("enabled", True):
-            # Bot Trading deaktiviert -> Signal ignorieren, aber sauber beantworten
             return "✅ Bot disabled (ignored)", 200
 
         cmd = (data.get("cmd") or "").strip().upper()
         if cmd and cmd != "ENTRY":
             return "✅ Ignored (cmd)", 200
 
-        symbol = str(data.get("symbol", "")).strip().upper()
-        side   = normalize_side(data.get("side") or data.get("direction"))
-        entry  = parse_entry(data)
-        tf     = str(data.get("tf") or data.get("timeframe") or "").strip()
+        symbol  = normalize_symbol_tv(str(data.get("symbol", "")).strip())
+        side    = normalize_side(data.get("side") or data.get("direction"))
+        entry   = parse_entry(data)  # nimmt entry oder price
+        tf      = str(data.get("tf") or data.get("timeframe") or "").strip()
         tv_time = str(data.get("time") or "").strip()
-        slf    = parse_float(data.get("slf"))
+        slf     = parse_float(data.get("slf"))
 
         if not symbol or side not in ["long", "short"] or entry <= 0:
             return "❌ Ungültige Daten (symbol/side/entry)", 400
@@ -702,6 +718,7 @@ def bot_webhook():
         if why == "duplicate":
             return "✅ Duplicate ignored", 200
 
+        # absichtlich KEIN Telegram hier
         return jsonify({"ok": True, "saved": ok, "id": sig_id}), 200
 
     except Exception as e:
