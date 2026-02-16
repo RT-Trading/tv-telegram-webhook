@@ -2,7 +2,7 @@ import os
 import time
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Flask, request
 import requests
 
@@ -21,7 +21,107 @@ TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY", "").strip()
 RT_SECRET = os.environ.get("RT_SECRET", "").strip()
 
 # =============================================================================
-# GRUND-FUNKTIONEN
+# NEU: BOT SIGNAL HUB (nur ENTRY Signale speichern, kein SL/TP Calc, kein Monitor)
+# =============================================================================
+BOT_SIGNALS_FILE = os.environ.get("BOT_SIGNALS_FILE", "bot_signals.json").strip()
+BOT_SIGNALS_MAX  = int(os.environ.get("BOT_SIGNALS_MAX", "3000"))
+
+_lock_bot = threading.Lock()
+
+def utc_now_iso():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+def load_bot_signals():
+    if not os.path.exists(BOT_SIGNALS_FILE):
+        return []
+    try:
+        with _lock_bot:
+            with open(BOT_SIGNALS_FILE, "r") as f:
+                data = json.load(f)
+                return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"Fehler beim Laden von {BOT_SIGNALS_FILE}: {e}")
+        return []
+
+def save_bot_signals(signals):
+    try:
+        with _lock_bot:
+            with open(BOT_SIGNALS_FILE, "w") as f:
+                json.dump(signals, f, indent=2)
+    except Exception as e:
+        print(f"Fehler beim Speichern von {BOT_SIGNALS_FILE}: {e}")
+
+def normalize_side(raw) -> str:
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    u = s.upper()
+    if u in ["LONG", "BUY", "BULL"]:
+        return "long"
+    if u in ["SHORT", "SELL", "BEAR"]:
+        return "short"
+    l = s.lower()
+    if l in ["long", "short"]:
+        return l
+    return ""
+
+def parse_float(v):
+    try:
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        s = str(v).strip()
+        if not s:
+            return None
+        return float(s)
+    except Exception:
+        return None
+
+def parse_entry(data: dict) -> float:
+    # akzeptiert: entry oder price oder close
+    return parse_float(data.get("entry")) or parse_float(data.get("price")) or parse_float(data.get("close")) or 0.0
+
+def build_signal_id(symbol: str, side: str, tf: str, t: str) -> str:
+    # stabile Dedup-ID, wenn TV mehrfach feuert
+    base = f"{symbol}_{side}_{tf}_{t}"
+    return base.replace(" ", "").replace(":", "").replace("-", "").replace(".", "")
+
+def save_bot_signal(symbol, side, entry, tf, slf=None, tv_time=None, raw=None):
+    signals = load_bot_signals()
+
+    tv_time = (tv_time or "").strip()
+    tf = (tf or "-").strip()
+
+    sig_id = build_signal_id(symbol, side, tf, tv_time or utc_now_iso())
+
+    # Dedup (letzte 500 prüfen)
+    for s in reversed(signals[-500:]):
+        if s.get("id") == sig_id:
+            return False, "duplicate"
+
+    sig = {
+        "id": sig_id,
+        "cmd": "ENTRY",
+        "symbol": symbol,
+        "side": side,
+        "tf": tf,
+        "entry": float(entry),
+        "slf": float(slf) if slf is not None else None,
+        "time": tv_time,
+        "received_at": utc_now_iso(),
+        "raw": raw or {}
+    }
+
+    signals.append(sig)
+    if BOT_SIGNALS_MAX > 0 and len(signals) > BOT_SIGNALS_MAX:
+        signals = signals[-BOT_SIGNALS_MAX:]
+
+    save_bot_signals(signals)
+    return True, "saved"
+
+# =============================================================================
+# GRUND-FUNKTIONEN (ALT – NICHT ÄNDERN)
 # =============================================================================
 def calc_sl(entry: float, side: str) -> float:
     risk_pct = 0.005
@@ -144,7 +244,7 @@ def log_error(text: str):
     print(f"⚠️ {text}")
 
 # =============================================================================
-# SYMBOL-MAPPING FÜR TWELVE DATA
+# SYMBOL-MAPPING FÜR TWELVE DATA (ALT)
 # =============================================================================
 def convert_symbol_for_twelve(symbol: str) -> str:
     symbol_map = {
@@ -162,7 +262,7 @@ def convert_symbol_for_twelve(symbol: str) -> str:
     return symbol_map.get(symbol.upper(), symbol)
 
 # =============================================================================
-# PREISABFRAGE
+# PREISABFRAGE (ALT)
 # =============================================================================
 def get_price(symbol: str) -> float:
     symbol = symbol.upper()
@@ -173,7 +273,6 @@ def get_price(symbol: str) -> float:
         "DOGEUSD": "dogecoin"
     }
     try:
-        # === CoinGecko für Krypto ===
         if symbol in COINGECKO_MAP:
             r = requests.get(
                 f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd",
@@ -181,7 +280,6 @@ def get_price(symbol: str) -> float:
             )
             return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
 
-        # === MetalsAPI für Gold/Silber ===
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             base = "XAU" if "XAU" in symbol else "XAG"
             if METALS_API_KEY:
@@ -197,9 +295,7 @@ def get_price(symbol: str) -> float:
                         raise Exception(f"MetalsAPI Fehler: {data}")
                 except Exception as e:
                     log_error(f"⚠️ MetalsAPI Fallback für {symbol}: {e}")
-            # Fallback: TwelveData
 
-        # === Twelve Data Fallback ===
         if not TWELVE_API_KEY:
             raise Exception("TWELVE_API_KEY fehlt (Fallback nicht möglich)")
 
@@ -218,37 +314,7 @@ def get_price(symbol: str) -> float:
         return 0.0
 
 # =============================================================================
-# NORMALIZER: side / cmd / entry(price)
-# =============================================================================
-def normalize_side(raw) -> str:
-    s = (raw or "").strip()
-    if not s:
-        return ""
-    u = s.upper()
-    if u in ["LONG", "BUY", "BULL"]:
-        return "long"
-    if u in ["SHORT", "SELL", "BEAR"]:
-        return "short"
-    # falls jemand schon "long"/"short" sendet:
-    l = s.lower()
-    if l in ["long", "short"]:
-        return l
-    return ""
-
-def parse_entry(data: dict) -> float:
-    # akzeptiert: entry oder price
-    v = data.get("entry", None)
-    if v is None:
-        v = data.get("price", None)
-    if v is None:
-        v = data.get("close", None)
-    try:
-        return float(v)
-    except Exception:
-        return 0.0
-
-# =============================================================================
-# MONITOR LOGIK
+# MONITOR LOGIK (ALT)
 # =============================================================================
 def check_trades():
     trades = load_trades()
@@ -334,7 +400,7 @@ def monitor_loop():
         time.sleep(180)
 
 def start_monitor_delayed():
-    time.sleep(3)  # verhindert Render-Startfehler
+    time.sleep(3)
     monitor_loop()
 
 # =============================================================================
@@ -352,18 +418,17 @@ def show_trades():
     except Exception as e:
         return f"Fehler beim Laden: {e}", 500
 
+# ✅ ALT /webhook bleibt unverändert (VIP / Telegram)
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
         data = request.get_json(force=True) or {}
         print("📬 Empfangen:", data)
 
-        # Optional Security
         if RT_SECRET:
             if str(data.get("key", "")).strip() != RT_SECRET:
                 return "❌ Unauthorized", 401
 
-        # cmd optional: du sendest cmd:"ENTRY"
         cmd = (data.get("cmd") or "").strip().upper()
         if cmd and cmd != "ENTRY":
             return "✅ Ignored (cmd)", 200
@@ -422,11 +487,73 @@ def add_manual():
         return f"❌ Fehler: {e}", 500
 
 # =============================================================================
-# STARTUP
+# NEU: BOT ROUTES
+# =============================================================================
+@app.route("/bot_signals", methods=["GET"])
+def bot_signals_get():
+    try:
+        signals = load_bot_signals()
+        # optional: ?limit=200
+        try:
+            limit = int(request.args.get("limit", "200"))
+        except Exception:
+            limit = 200
+        limit = max(1, min(5000, limit))
+        out = signals[-limit:]
+        return json.dumps(out, indent=2), 200, {"Content-Type": "application/json"}
+    except Exception as e:
+        return f"Fehler: {e}", 500
+
+@app.route("/bot_webhook", methods=["POST"])
+def bot_webhook():
+    try:
+        data = request.get_json(force=True) or {}
+        print("🤖 BOT Webhook empfangen:", data)
+
+        # gleiche Security wie VIP (du wolltest nichts ändern -> wir nutzen RT_SECRET)
+        if RT_SECRET:
+            if str(data.get("key", "")).strip() != RT_SECRET:
+                return "❌ Unauthorized", 401
+
+        cmd = (data.get("cmd") or "").strip().upper()
+        if cmd and cmd != "ENTRY":
+            return "✅ Ignored (cmd)", 200
+
+        symbol = str(data.get("symbol", "")).strip().upper()
+        side   = normalize_side(data.get("side") or data.get("direction"))
+        entry  = parse_entry(data)
+        tf     = str(data.get("tf") or data.get("timeframe") or "").strip()
+        tv_time = str(data.get("time") or "").strip()
+        slf    = parse_float(data.get("slf"))
+
+        if not symbol or side not in ["long", "short"] or entry <= 0:
+            return "❌ Ungültige Daten (symbol/side/entry)", 400
+
+        ok, why = save_bot_signal(
+            symbol=symbol,
+            side=side,
+            entry=entry,
+            tf=tf,
+            slf=slf,
+            tv_time=tv_time,
+            raw=data
+        )
+
+        if why == "duplicate":
+            return "✅ Duplicate ignored", 200
+
+        # absichtlich KEIN Telegram hier (damit VIP nicht doppelt spamt)
+        return "✅ OK", 200
+
+    except Exception as e:
+        print("❌ BOT Fehler:", str(e))
+        return f"❌ Fehler: {str(e)}", 400
+
+# =============================================================================
+# STARTUP (ALT Monitor bleibt)
 # =============================================================================
 threading.Thread(target=start_monitor_delayed, daemon=True).start()
 
-# Render braucht oft PORT
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
