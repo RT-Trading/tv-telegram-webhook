@@ -47,6 +47,10 @@ BOT_NEW_CLIENT_BASELINE = os.environ.get("BOT_NEW_CLIENT_BASELINE", "1").strip()
 #    damit ein Signal nicht mehrfach getradet wird.
 BOT_AUTO_ACK_ON_GET = os.environ.get("BOT_AUTO_ACK_ON_GET", "1").strip() != "0"
 
+
+# 3) Baseline-Schutz: wenn das neueste Signal "frisch" ist, liefern wir es auch beim ersten Poll aus.
+#    Damit wird das erste echte Live-Signal nicht verschluckt.
+BOT_BASELINE_GRACE_SEC = int(os.environ.get("BOT_BASELINE_GRACE_SEC", "120"))
 # =============================================================================
 # LOCKS
 # =============================================================================
@@ -61,6 +65,23 @@ _lock_clients = threading.RLock()
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+def parse_iso_utc(s: str):
+    """Parse ISO8601 (Z oder +00:00) -> aware datetime in UTC, oder None."""
+    try:
+        if not s:
+            return None
+        s = str(s).strip()
+        if not s:
+            return None
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
 
 
 def log_error(text: str):
@@ -568,11 +589,22 @@ def next_signal_for_client(client_id: str):
 
     last_ack = get_client_last_ack(client_id)
 
-    # ✅ Neuer Client: baseline setzen, aber nichts liefern
+    # ✅ Neuer Client:
+    # Standard: baseline setzen (altes Signal NICHT ausliefern), damit beim Serverstart kein Trade aufgeht.
+    # Aber: wenn das neueste Signal "frisch" ist (<= BOT_BASELINE_GRACE_SEC), liefern wir es aus,
+    # damit das erste Live-Signal nicht verschluckt wird.
     if not last_ack:
         if BOT_NEW_CLIENT_BASELINE and client_id:
+            newest = signals[-1]
+            newest_dt = parse_iso_utc(newest.get("received_at") or newest.get("time"))
+            if newest_dt:
+                age = (datetime.now(timezone.utc) - newest_dt).total_seconds()
+                if age <= float(BOT_BASELINE_GRACE_SEC):
+                    return newest
+
+            # älter -> baseline setzen, nichts liefern
             try:
-                last_id = str(signals[-1].get("id", "")).strip()
+                last_id = str(newest.get("id", "")).strip()
                 if last_id:
                     remember_client_ack(client_id, last_id)
             except Exception:
