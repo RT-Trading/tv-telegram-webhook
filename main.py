@@ -658,21 +658,38 @@ def bot_signals_get():
 def bot_next():
     client_id = str(request.args.get("client", "")).strip()
     sig = next_signal_for_client(client_id)
-    return jsonify({"ok": True, "signal": sig}), 200
 
-@app.route("/bot_ack", methods=["POST"])
-def bot_ack():
-    data = request.get_json(force=True) or {}
-    if not require_secret(data, "bot"):
-        return "❌ Unauthorized", 401
+    # Basis: wie bisher, damit alte Clients nicht kaputt gehen
+    payload = {"ok": True, "signal": sig}
 
-    client_id = str(data.get("client", "")).strip()
-    sig_id    = str(data.get("id", "")).strip()
-    if not client_id or not sig_id:
-        return "❌ client/id fehlt", 400
+    # Wenn es ein Signal gibt: zusätzlich FLACH (Top-Level) ausgeben,
+    # damit cTrader-cBots es finden, auch wenn sie NICHT signal.{...} lesen.
+    if sig:
+        s = dict(sig)
 
-    remember_client_ack(client_id, sig_id)
-    return jsonify({"ok": True, "client": client_id, "acked": sig_id}), 200
+        # side kompatibel machen: long/short -> LONG/SHORT + BUY/SELL
+        side_lc = (s.get("side") or "").lower()
+        if side_lc == "long":
+            side_u = "LONG"
+        elif side_lc == "short":
+            side_u = "SHORT"
+        else:
+            side_u = (s.get("side") or "").upper()
+
+        s["side"] = side_u
+        s["direction"] = side_u
+        s["action"] = "BUY" if side_u == "LONG" else "SELL" if side_u == "SHORT" else ""
+
+        # Aliase (manche Bots erwarten andere Feldnamen)
+        s["sl"] = s.get("slf")          # alias zu slf
+        s["timeframe"] = s.get("tf")    # alias zu tf
+
+        # ✅ Alles auch auf Top-Level spiegeln
+        payload.update(s)
+        payload["signal"] = s
+
+    return jsonify(payload), 200
+
 
 # ---------------------------------------------------------------------
 # BOT: /bot_webhook (dein "RT BOT Entry Long/Short")
