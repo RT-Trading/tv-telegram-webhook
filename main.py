@@ -17,6 +17,9 @@ CHAT_ID        = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 METALS_API_KEY = os.environ.get("METALS_API_KEY", "").strip()
 TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY", "").strip()
 
+# MetalsAPI bei 429 temporär aussetzen (sonst unnötige Retries bei jedem Poll)
+METALS_API_COOLDOWN_UNTIL = 0
+
 # Security: Du sendest in TV "key":"RTBOT" -> setze RT_SECRET=RTBOT in Render
 RT_SECRET = os.environ.get("RT_SECRET", "").strip()
 
@@ -332,6 +335,8 @@ def convert_symbol_for_twelve(symbol: str) -> str:
 # =============================================================================
 
 def get_price(symbol: str) -> float:
+    global METALS_API_COOLDOWN_UNTIL
+
     symbol = symbol.upper()
     COINGECKO_MAP = {
         "BTCUSD": "bitcoin",
@@ -351,15 +356,31 @@ def get_price(symbol: str) -> float:
         # Metals via metals-api (fallback: TwelveData)
         if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
             base = "XAU" if "XAU" in symbol else "XAG"
-            if METALS_API_KEY:
+
+            # MetalsAPI nur nutzen, wenn kein Cooldown aktiv ist
+            if METALS_API_KEY and time.time() >= float(METALS_API_COOLDOWN_UNTIL):
                 try:
                     r = requests.get(
                         f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD",
                         timeout=10,
                     )
                     data = r.json()
+
                     if data.get("success") and "rates" in data and "USD" in data["rates"]:
-                        return float(data["rates"]["USD"])
+                        val = float(data["rates"]["USD"])
+
+                        # Sicherheitsnetz: falls irgendwann versehentlich invertierter Wert kommt
+                        # (z. B. base=USD -> XAU pro USD), dann zurückdrehen.
+                        if val < 1:
+                            val = 1 / val
+
+                        return val
+
+                    err = data.get("error", {}) if isinstance(data, dict) else {}
+                    if isinstance(err, dict) and int(err.get("code", 0) or 0) == 429:
+                        METALS_API_COOLDOWN_UNTIL = time.time() + 3600  # 1h
+                        log_error("⚠️ MetalsAPI Limit erreicht (429) – nutze 1h lang nur Fallback.")
+
                     raise Exception(f"MetalsAPI Fehler: {data}")
                 except Exception as e:
                     log_error(f"⚠️ MetalsAPI Fallback für {symbol}: {e}")
@@ -390,6 +411,9 @@ def check_trades():
     trades = load_trades()
     updated = []
 
+    # Preis pro Symbol nur 1x pro Durchlauf holen (verhindert inkonsistente Snapshots)
+    price_cache = {}
+
     for t in trades:
         if t.get("closed"):
             updated.append(t)
@@ -408,7 +432,10 @@ def check_trades():
         t.setdefault("tp3_hit", False)
         t.setdefault("sl_hit", False)
 
-        price = get_price(symbol)
+        if symbol not in price_cache:
+            price_cache[symbol] = get_price(symbol)
+        price = price_cache[symbol]
+
         print(f"🔍 {symbol} Preis: {price}")
         if price == 0:
             updated.append(t)
@@ -419,42 +446,62 @@ def check_trades():
             send_telegram(text)
 
         if side == "long":
+            # TP-Kette bewusst separat prüfen (kein elif), damit bei schnellen Moves
+            # mehrere Ziele in einem Poll sauber nachgezogen werden.
             if not t["tp1_hit"] and price >= tp1:
                 t["tp1_hit"] = True
                 alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
-            elif t["tp1_hit"] and not t["tp2_hit"] and price >= tp2:
+
+            if not t["tp2_hit"] and price >= tp2:
+                t["tp1_hit"] = True
                 t["tp2_hit"] = True
                 alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
-            elif t["tp2_hit"] and not t["tp3_hit"] and price >= tp3:
+
+            if not t["tp3_hit"] and price >= tp3:
+                t["tp1_hit"] = True
+                t["tp2_hit"] = True
                 t["tp3_hit"] = True
                 alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
                 t["closed"] = True
-            elif not t["tp1_hit"] and not t["sl_hit"] and price <= sl:
-                t["sl_hit"] = True
-                alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
-                t["closed"] = True
-            elif t["tp1_hit"] and not t["closed"] and price <= entry:
-                alert("💰 *Trade teilweise im Gewinn geschlossen – TP1/TP2 wurden erreicht, Rest auf Entry beendet.*")
-                t["closed"] = True
+
+            # SL / BE nur prüfen, wenn Trade nicht schon durch Full TP geschlossen wurde
+            if not t["closed"]:
+                if not t["tp1_hit"] and not t["sl_hit"] and price <= sl:
+                    t["sl_hit"] = True
+                    alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
+                    t["closed"] = True
+                elif t["tp1_hit"] and price <= entry:
+                    alert("💰 *Trade teilweise im Gewinn geschlossen – TP1/TP2 wurden erreicht, Rest auf Entry beendet.*")
+                    t["closed"] = True
 
         elif side == "short":
+            # TP-Kette bewusst separat prüfen (kein elif), damit bei schnellen Moves
+            # mehrere Ziele in einem Poll sauber nachgezogen werden.
             if not t["tp1_hit"] and price <= tp1:
                 t["tp1_hit"] = True
                 alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
-            elif t["tp1_hit"] and not t["tp2_hit"] and price <= tp2:
+
+            if not t["tp2_hit"] and price <= tp2:
+                t["tp1_hit"] = True
                 t["tp2_hit"] = True
                 alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
-            elif t["tp2_hit"] and not t["tp3_hit"] and price <= tp3:
+
+            if not t["tp3_hit"] and price <= tp3:
+                t["tp1_hit"] = True
+                t["tp2_hit"] = True
                 t["tp3_hit"] = True
                 alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
                 t["closed"] = True
-            elif not t["tp1_hit"] and not t["sl_hit"] and price >= sl:
-                t["sl_hit"] = True
-                alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
-                t["closed"] = True
-            elif t["tp1_hit"] and not t["closed"] and price >= entry:
-                alert("💰 *Trade teilweise im Gewinn geschlossen – TP1/TP2 wurden erreicht, Rest auf Entry beendet.*")
-                t["closed"] = True
+
+            # SL / BE nur prüfen, wenn Trade nicht schon durch Full TP geschlossen wurde
+            if not t["closed"]:
+                if not t["tp1_hit"] and not t["sl_hit"] and price >= sl:
+                    t["sl_hit"] = True
+                    alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
+                    t["closed"] = True
+                elif t["tp1_hit"] and price >= entry:
+                    alert("💰 *Trade teilweise im Gewinn geschlossen – TP1/TP2 wurden erreicht, Rest auf Entry beendet.*")
+                    t["closed"] = True
 
         updated.append(t)
 
@@ -468,7 +515,7 @@ def monitor_loop():
             check_trades()
         except Exception as e:
             log_error(f"Hauptfehler: {e}")
-        time.sleep(180)
+        time.sleep(15)
 
 
 def start_monitor_delayed():
