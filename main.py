@@ -3,6 +3,7 @@ import time
 import json
 import threading
 from datetime import datetime, timezone
+from typing import Any, Dict, List
 
 from flask import Flask, request, jsonify
 import requests
@@ -12,65 +13,69 @@ app = Flask(__name__)
 # =============================================================================
 # ENV
 # =============================================================================
-BOT_TOKEN      = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-CHAT_ID        = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 METALS_API_KEY = os.environ.get("METALS_API_KEY", "").strip()
 TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY", "").strip()
 
-# MetalsAPI bei 429 temporär aussetzen (sonst unnötige Retries bei jedem Poll)
-METALS_API_COOLDOWN_UNTIL = 0
+# MetalsAPI bei 429 temporär aussetzen
+METALS_API_COOLDOWN_UNTIL = 0.0
 
-# Security: Du sendest in TV "key":"RTBOT" -> setze RT_SECRET=RTBOT in Render
+# Security
 RT_SECRET = os.environ.get("RT_SECRET", "").strip()
-
-# Optional getrennte Secrets (wenn du willst)
 VIP_SECRET = os.environ.get("VIP_SECRET", "").strip() or RT_SECRET
 BOT_SECRET = os.environ.get("BOT_SECRET", "").strip() or RT_SECRET
 
-# =============================================================================
-# FILES (ALT + NEU)
-# =============================================================================
-TRADES_FILE  = os.environ.get("TRADES_FILE", "trades.json").strip()
-ERRORS_FILE  = os.environ.get("ERRORS_FILE", "errors.log").strip()
+# Files
+TRADES_FILE = os.environ.get("TRADES_FILE", "trades.json").strip()
+ERRORS_FILE = os.environ.get("ERRORS_FILE", "errors.log").strip()
 
 BOT_SIGNALS_FILE = os.environ.get("BOT_SIGNALS_FILE", "bot_signals.json").strip()
-BOT_SIGNALS_MAX  = int(os.environ.get("BOT_SIGNALS_MAX", "3000"))
-BOT_STATE_FILE   = os.environ.get("BOT_STATE_FILE", "bot_state.json").strip()
+BOT_SIGNALS_MAX = int(os.environ.get("BOT_SIGNALS_MAX", "3000"))
+BOT_STATE_FILE = os.environ.get("BOT_STATE_FILE", "bot_state.json").strip()
 BOT_CLIENTS_FILE = os.environ.get("BOT_CLIENTS_FILE", "bot_clients.json").strip()
 
 RUN_MONITOR = os.environ.get("RUN_MONITOR", "1").strip() != "0"
 
 # =============================================================================
-# BOT DELIVERY BEHAVIOR (NEU)
+# MONITOR TUNING (VIP TELEGRAM)
 # =============================================================================
-# 1) Verhindert "Trade beim Serverstart": neuer Client bekommt NICHT sofort das letzte alte Signal.
+# Polling für VIP-Trade-Monitor (wichtig für TP3/BE Erkennung)
+MONITOR_POLL_SEC = max(1, int(os.environ.get("MONITOR_POLL_SEC", "3")))
+
+# Debug-Logs für Monitor (Preis/TP/Flags)
+MONITOR_DEBUG = os.environ.get("MONITOR_DEBUG", "1").strip() != "0"
+
+# Kleine Toleranz gegen Rundung/Feed-Unterschiede (relativ zum Zielpreis)
+# Beispiel 0.00005 = 0.005%
+TRIGGER_EPS_PCT = float(os.environ.get("TRIGGER_EPS_PCT", "0.00005"))
+
+# =============================================================================
+# BOT DELIVERY BEHAVIOR (für cTrader-Hub, bleibt drin)
+# =============================================================================
 BOT_NEW_CLIENT_BASELINE = os.environ.get("BOT_NEW_CLIENT_BASELINE", "1").strip() != "0"
-
-# 2) Falls dein cBot KEIN /bot_ack sendet: Auto-ACK auf GET /bot_next,
-#    damit ein Signal nicht mehrfach getradet wird.
 BOT_AUTO_ACK_ON_GET = os.environ.get("BOT_AUTO_ACK_ON_GET", "1").strip() != "0"
-
-
-# 3) Baseline-Schutz: wenn das neueste Signal "frisch" ist, liefern wir es auch beim ersten Poll aus.
-#    Damit wird das erste echte Live-Signal nicht verschluckt.
 BOT_BASELINE_GRACE_SEC = int(os.environ.get("BOT_BASELINE_GRACE_SEC", "120"))
+
 # =============================================================================
 # LOCKS
 # =============================================================================
-_lock_trades  = threading.RLock()
-_lock_bot     = threading.RLock()
-_lock_state   = threading.RLock()
+_lock_trades = threading.RLock()
+_lock_bot = threading.RLock()
+_lock_state = threading.RLock()
 _lock_clients = threading.RLock()
+
+# requests Session (leichter/stabiler)
+_http = requests.Session()
 
 # =============================================================================
 # BASICS
 # =============================================================================
-
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
+
 def parse_iso_utc(s: str):
-    """Parse ISO8601 (Z oder +00:00) -> aware datetime in UTC, oder None."""
     try:
         if not s:
             return None
@@ -89,15 +94,20 @@ def parse_iso_utc(s: str):
 
 def log_error(text: str):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{now}] {text}"
     try:
         with open(ERRORS_FILE, "a", encoding="utf-8") as f:
-            f.write(f"[{now}] {text}\n")
+            f.write(line + "\n")
     except Exception:
         pass
-    print(f"⚠️ {text}")
+    print(f"⚠️ {line}")
 
 
-def _safe_read_json(path, default):
+def log_info(text: str):
+    print(text)
+
+
+def _safe_read_json(path: str, default):
     if not os.path.exists(path):
         return default
     try:
@@ -108,7 +118,7 @@ def _safe_read_json(path, default):
         return default
 
 
-def _safe_write_json_atomic(path, data) -> bool:
+def _safe_write_json_atomic(path: str, data) -> bool:
     tmp = path + ".tmp"
     try:
         with open(tmp, "w", encoding="utf-8") as f:
@@ -126,7 +136,6 @@ def _safe_write_json_atomic(path, data) -> bool:
 
 
 def require_secret(data: dict, purpose: str) -> bool:
-    """purpose: "vip" oder "bot". Wenn Secret gesetzt ist -> data["key"] muss passen."""
     secret = VIP_SECRET if purpose == "vip" else BOT_SECRET
     if secret:
         if str(data.get("key", "")).strip() != secret:
@@ -155,7 +164,7 @@ def parse_float(v):
             return None
         if isinstance(v, (int, float)):
             return float(v)
-        s = str(v).strip()
+        s = str(v).strip().replace(",", ".")
         if not s:
             return None
         return float(s)
@@ -164,7 +173,7 @@ def parse_float(v):
 
 
 def parse_entry(data: dict) -> float:
-    # passt auf deine Alerts: entweder "price":"{{close}}" ODER "entry":"{{plot(\"entry\")}}"
+    # unterstützt entry / price / close
     return (
         parse_float(data.get("entry"))
         or parse_float(data.get("price"))
@@ -174,11 +183,6 @@ def parse_entry(data: dict) -> float:
 
 
 def normalize_symbol_tv(symbol: str) -> str:
-    """Robust:
-    - entfernt Prefix "OANDA:EURUSD" -> "EURUSD"
-    - trim/upper
-    - vereinheitlicht ein paar Synonyme
-    """
     s = (symbol or "").strip()
     if ":" in s:
         s = s.split(":")[-1]
@@ -190,43 +194,103 @@ def normalize_symbol_tv(symbol: str) -> str:
         "XAUUSD": "XAUUSD",
         "XAGUSD": "XAGUSD",
         "NAS100": "NAS100",
-        "US100": "US100",
+        "US100": "NAS100",
         "US30": "US30",
         "GER40": "GER40",
     }
     return syn.get(s, s)
 
-# =============================================================================
-# TELEGRAM (ALT)
-# =============================================================================
 
-def send_telegram(text: str, retry: bool = True):
+def num_digits_for_symbol(symbol: str) -> int:
+    symbol = (symbol or "").upper()
+    five_digits = {"EURUSD", "GBPUSD", "AUDUSD", "NZDUSD", "USDCAD", "USDCHF"}
+    three_digits = {"USDJPY", "EURJPY", "GBPJPY", "AUDJPY"}
+    two_digits = {"BTCUSD", "NAS100", "XAUUSD", "XAGUSD", "SILVER", "US30", "US500", "GER40"}
+    if symbol in five_digits:
+        return 5
+    if symbol in three_digits:
+        return 3
+    if symbol in two_digits:
+        return 2
+    return 4
+
+
+def fmt_price(symbol: str, value: float) -> str:
+    d = num_digits_for_symbol(symbol)
+    return f"{float(value):.{d}f}"
+
+
+def trigger_eps_abs(target: float) -> float:
+    if target is None:
+        return 0.0
     try:
-        if not BOT_TOKEN or not CHAT_ID:
-            raise Exception("TELEGRAM_BOT_TOKEN oder TELEGRAM_CHAT_ID fehlt")
+        return abs(float(target)) * max(0.0, TRIGGER_EPS_PCT)
+    except Exception:
+        return 0.0
 
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
-        r = requests.post(url, data=payload, timeout=10)
-        print("📱 Telegram Response:", r.status_code, r.text)
-        if r.status_code != 200:
-            raise Exception("Telegram-Fehler")
-    except Exception as e:
-        print(f"Telegram Fehler: {e}")
-        if retry:
-            send_telegram(text, retry=False)
+
+def hit_tp_long(price: float, target: float) -> bool:
+    return price >= (target - trigger_eps_abs(target))
+
+
+def hit_tp_short(price: float, target: float) -> bool:
+    return price <= (target + trigger_eps_abs(target))
+
+
+def hit_sl_long(price: float, sl: float) -> bool:
+    return price <= (sl + trigger_eps_abs(sl))
+
+
+def hit_sl_short(price: float, sl: float) -> bool:
+    return price >= (sl - trigger_eps_abs(sl))
+
+
+def back_to_entry_long(price: float, entry: float) -> bool:
+    return price <= (entry + trigger_eps_abs(entry))
+
+
+def back_to_entry_short(price: float, entry: float) -> bool:
+    return price >= (entry - trigger_eps_abs(entry))
 
 # =============================================================================
-# TRADES (ALT)
+# TELEGRAM
 # =============================================================================
+def send_telegram(text: str, retries: int = 1):
+    if not BOT_TOKEN or not CHAT_ID:
+        log_error("Telegram nicht konfiguriert (BOT_TOKEN/CHAT_ID fehlt)")
+        return False
 
-def load_trades():
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
+
+    last_err = None
+    attempts = max(1, int(retries) + 1)
+    for attempt in range(1, attempts + 1):
+        try:
+            r = _http.post(url, data=payload, timeout=10)
+            print("📱 Telegram Response:", r.status_code, r.text)
+            if r.status_code == 200:
+                return True
+            last_err = f"HTTP {r.status_code}: {r.text}"
+        except Exception as e:
+            last_err = str(e)
+
+        if attempt < attempts:
+            time.sleep(1)
+
+    log_error(f"Telegram Fehler: {last_err}")
+    return False
+
+# =============================================================================
+# TRADES (VIP-Monitor)
+# =============================================================================
+def load_trades() -> List[Dict[str, Any]]:
     with _lock_trades:
         data = _safe_read_json(TRADES_FILE, [])
         return data if isinstance(data, list) else []
 
 
-def save_trades(trades):
+def save_trades(trades: List[Dict[str, Any]]):
     with _lock_trades:
         _safe_write_json_atomic(TRADES_FILE, trades)
 
@@ -234,18 +298,22 @@ def save_trades(trades):
 def save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta=None):
     trade = {
         "symbol": symbol,
-        "entry": entry,
-        "sl": sl,
-        "tp1": tp1,
-        "tp2": tp2,
-        "tp3": tp3,
+        "entry": float(entry),
+        "sl": float(sl),
+        "tp1": float(tp1),
+        "tp2": float(tp2),
+        "tp3": float(tp3),
         "side": side,
         "tp1_hit": False,
         "tp2_hit": False,
         "tp3_hit": False,
         "sl_hit": False,
         "closed": False,
-        "created_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": utc_now_iso(),
+        "updated_at": utc_now_iso(),
+        "last_price": None,
+        "last_check_at": None,
+        "close_reason": None,
         "meta": meta or {},
     }
     trades = load_trades()
@@ -253,68 +321,49 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta=None):
     save_trades(trades)
 
 # =============================================================================
-# ALT – SL/TP/MSG
+# VIP: SL/TP/MSG
 # =============================================================================
-
 def calc_sl(entry: float, side: str) -> float:
     risk_pct = 0.005
     return entry * (1 - risk_pct) if side == "long" else entry * (1 + risk_pct)
 
 
 def calc_tp(entry: float, sl: float, side: str, symbol: str):
-    metals = ["XAUUSD", "XAGUSD", "SILVER", "GOLD"]
+    metals = {"XAUUSD", "XAGUSD", "SILVER", "GOLD"}
     risk = abs(entry - sl)
     if symbol in metals:
         tp_pct = [0.004, 0.008, 0.012]
         if side == "long":
             return entry * (1 + tp_pct[0]), entry * (1 + tp_pct[1]), entry * (1 + tp_pct[2])
-        else:
-            return entry * (1 - tp_pct[0]), entry * (1 - tp_pct[1]), entry * (1 - tp_pct[2])
-    else:
-        if side == "long":
-            return entry + 2 * risk, entry + 3.6 * risk, entry + 5.6 * risk
-        else:
-            return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
+        return entry * (1 - tp_pct[0]), entry * (1 - tp_pct[1]), entry * (1 - tp_pct[2])
+
+    if side == "long":
+        return entry + 2 * risk, entry + 3.6 * risk, entry + 5.6 * risk
+    return entry - 2 * risk, entry - 3.6 * risk, entry - 5.6 * risk
 
 
 def format_message(symbol: str, entry: float, sl: float, tp1: float, tp2: float, tp3: float, side: str) -> str:
-    five_digits = ["EURUSD", "GBPUSD", "GBPJPY"]
-    three_digits = ["USDJPY"]
-    two_digits = ["BTCUSD", "NAS100", "XAUUSD", "XAGUSD", "SILVER", "US30", "US500", "GER40"]
-
-    if symbol in five_digits:
-        digits = 5
-    elif symbol in three_digits:
-        digits = 3
-    elif symbol in two_digits:
-        digits = 2
-    else:
-        digits = 4
-
-    fmt = f"{{:.{digits}f}}"
     direction = "🟢 *LONG* 📈" if side == "long" else "🔴 *SHORT* 📉"
-
     return f"""\
-🔔 *RT-Trading VIP* 🔔  
-📊 *{symbol}*  
+🔔 *RT-Trading VIP* 🔔
+📊 *{symbol}*
 {direction}
 
-📍 *Entry*: `{fmt.format(entry)}`  
-🛑 *SL*: `{fmt.format(sl)}`
+📍 *Entry*: `{fmt_price(symbol, entry)}`
+🛑 *SL*: `{fmt_price(symbol, sl)}`
 
-🎯 *TP 1*: `{fmt.format(tp1)}`  
-🎯 *TP 2*: `{fmt.format(tp2)}`  
-🎯 *Full TP*: `{fmt.format(tp3)}`
+🎯 *TP 1*: `{fmt_price(symbol, tp1)}`
+🎯 *TP 2*: `{fmt_price(symbol, tp2)}`
+🎯 *Full TP*: `{fmt_price(symbol, tp3)}`
 
-⚠️ *Keine Finanzberatung!*  
-📌 Achtet auf *Money Management*!  
+⚠️ *Keine Finanzberatung!*
+📌 Achtet auf *Money Management*!
 🔀 TP1 erreicht → *Breakeven setzen*.
 """
 
 # =============================================================================
-# SYMBOL-MAPPING FÜR TWELVE DATA (ALT)
+# SYMBOL-MAPPING FÜR TWELVE DATA
 # =============================================================================
-
 def convert_symbol_for_twelve(symbol: str) -> str:
     symbol_map = {
         "XAUUSD": "XAU/USD",
@@ -331,36 +380,36 @@ def convert_symbol_for_twelve(symbol: str) -> str:
     return symbol_map.get(symbol.upper(), symbol)
 
 # =============================================================================
-# PREISABFRAGE (ALT)
+# PREISABFRAGE (VIP-Monitor)
 # =============================================================================
-
 def get_price(symbol: str) -> float:
     global METALS_API_COOLDOWN_UNTIL
 
     symbol = symbol.upper()
-    COINGECKO_MAP = {
+    coingecko_map = {
         "BTCUSD": "bitcoin",
         "ETHUSD": "ethereum",
         "XRPUSD": "ripple",
         "DOGEUSD": "dogecoin",
     }
+
     try:
         # Crypto via Coingecko
-        if symbol in COINGECKO_MAP:
-            r = requests.get(
-                f"https://api.coingecko.com/api/v3/simple/price?ids={COINGECKO_MAP[symbol]}&vs_currencies=usd",
+        if symbol in coingecko_map:
+            r = _http.get(
+                f"https://api.coingecko.com/api/v3/simple/price?ids={coingecko_map[symbol]}&vs_currencies=usd",
                 timeout=10,
             )
-            return float(r.json()[COINGECKO_MAP[symbol]]["usd"])
+            data = r.json()
+            return float(data[coingecko_map[symbol]]["usd"])
 
-        # Metals via metals-api (fallback: TwelveData)
-        if symbol in ["XAUUSD", "SILVER", "XAGUSD"]:
+        # Metals via metals-api (mit Cooldown)
+        if symbol in {"XAUUSD", "SILVER", "XAGUSD"}:
             base = "XAU" if "XAU" in symbol else "XAG"
 
-            # MetalsAPI nur nutzen, wenn kein Cooldown aktiv ist
-            if METALS_API_KEY and time.time() >= float(METALS_API_COOLDOWN_UNTIL):
+            if METALS_API_KEY and time.time() >= METALS_API_COOLDOWN_UNTIL:
                 try:
-                    r = requests.get(
+                    r = _http.get(
                         f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD",
                         timeout=10,
                     )
@@ -368,51 +417,65 @@ def get_price(symbol: str) -> float:
 
                     if data.get("success") and "rates" in data and "USD" in data["rates"]:
                         val = float(data["rates"]["USD"])
-
-                        # Sicherheitsnetz: falls irgendwann versehentlich invertierter Wert kommt
-                        # (z. B. base=USD -> XAU pro USD), dann zurückdrehen.
                         if val < 1:
                             val = 1 / val
-
                         return val
 
                     err = data.get("error", {}) if isinstance(data, dict) else {}
                     if isinstance(err, dict) and int(err.get("code", 0) or 0) == 429:
-                        METALS_API_COOLDOWN_UNTIL = time.time() + 3600  # 1h
-                        log_error("⚠️ MetalsAPI Limit erreicht (429) – nutze 1h lang nur Fallback.")
+                        METALS_API_COOLDOWN_UNTIL = time.time() + 3600
+                        log_error("MetalsAPI Limit erreicht (429) – 1h nur Fallback (TwelveData).")
 
                     raise Exception(f"MetalsAPI Fehler: {data}")
                 except Exception as e:
-                    log_error(f"⚠️ MetalsAPI Fallback für {symbol}: {e}")
+                    log_error(f"MetalsAPI Fallback für {symbol}: {e}")
 
         # Fallback TwelveData
         if not TWELVE_API_KEY:
             raise Exception("TWELVE_API_KEY fehlt (Fallback nicht möglich)")
 
         symbol_twelve = convert_symbol_for_twelve(symbol)
-        r = requests.get(
+        r = _http.get(
             f"https://api.twelvedata.com/price?symbol={symbol_twelve}&apikey={TWELVE_API_KEY}",
             timeout=10,
         )
         data = r.json()
-        if "price" in data and isinstance(data["price"], str):
+        if "price" in data and str(data["price"]).strip():
             return float(data["price"])
         raise Exception(f"Twelve Data Fehler: {data}")
 
     except Exception as e:
-        log_error(f"❌ Preisabruf Fehler für {symbol}: {e}")
+        log_error(f"Preisabruf Fehler für {symbol}: {e}")
         return 0.0
 
 # =============================================================================
-# MONITOR LOGIK (ALT)
+# MONITOR LOGIK (VIP)
 # =============================================================================
+def _alert_trade(symbol: str, side: str, msg: str):
+    text = f"*{symbol}* | *{str(side).upper()}*\n{msg}"
+    send_telegram(text, retries=1)
+
+
+def _debug_trade_state(t: Dict[str, Any], price: float):
+    if not MONITOR_DEBUG:
+        return
+    symbol = (t.get("symbol") or "").upper()
+    side = t.get("side")
+    print(
+        "DEBUG "
+        f"{symbol} {side} | price={price} entry={t.get('entry')} sl={t.get('sl')} "
+        f"tp1={t.get('tp1')} tp2={t.get('tp2')} tp3={t.get('tp3')} | "
+        f"tp1_hit={t.get('tp1_hit')} tp2_hit={t.get('tp2_hit')} tp3_hit={t.get('tp3_hit')} "
+        f"sl_hit={t.get('sl_hit')} closed={t.get('closed')}"
+    )
+
 
 def check_trades():
     trades = load_trades()
-    updated = []
+    updated: List[Dict[str, Any]] = []
 
-    # Preis pro Symbol nur 1x pro Durchlauf holen (verhindert inkonsistente Snapshots)
-    price_cache = {}
+    # Preis pro Symbol nur 1x pro Durchlauf
+    price_cache: Dict[str, float] = {}
 
     for t in trades:
         if t.get("closed"):
@@ -420,88 +483,104 @@ def check_trades():
             continue
 
         symbol = (t.get("symbol", "") or "").upper()
-        entry = t.get("entry")
-        sl = t.get("sl")
-        side = t.get("side")
-        tp1 = t.get("tp1")
-        tp2 = t.get("tp2")
-        tp3 = t.get("tp3")
+        side = (t.get("side", "") or "").lower()
+        entry = parse_float(t.get("entry")) or 0.0
+        sl = parse_float(t.get("sl")) or 0.0
+        tp1 = parse_float(t.get("tp1")) or 0.0
+        tp2 = parse_float(t.get("tp2")) or 0.0
+        tp3 = parse_float(t.get("tp3")) or 0.0
 
         t.setdefault("tp1_hit", False)
         t.setdefault("tp2_hit", False)
         t.setdefault("tp3_hit", False)
         t.setdefault("sl_hit", False)
+        t.setdefault("closed", False)
 
         if symbol not in price_cache:
             price_cache[symbol] = get_price(symbol)
         price = price_cache[symbol]
 
-        print(f"🔍 {symbol} Preis: {price}")
+        t["last_price"] = price
+        t["last_check_at"] = utc_now_iso()
+        t["updated_at"] = utc_now_iso()
+
+        log_info(f"🔍 {symbol} Preis: {price}")
+        _debug_trade_state(t, price)
+
         if price == 0:
             updated.append(t)
             continue
 
-        def alert(msg: str):
-            text = f"*{symbol}* | *{str(side).upper()}*\n{msg}"
-            send_telegram(text)
-
+        # LONG
         if side == "long":
-            # TP-Kette bewusst separat prüfen (kein elif), damit bei schnellen Moves
-            # mehrere Ziele in einem Poll sauber nachgezogen werden.
-            if not t["tp1_hit"] and price >= tp1:
+            # TP-Kette separat, damit mehrere Ziele in einem Poll verarbeitet werden
+            if (not t["tp1_hit"]) and hit_tp_long(price, tp1):
                 t["tp1_hit"] = True
-                alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
+                _alert_trade(symbol, side, "💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
 
-            if not t["tp2_hit"] and price >= tp2:
+            if (not t["tp2_hit"]) and hit_tp_long(price, tp2):
                 t["tp1_hit"] = True
                 t["tp2_hit"] = True
-                alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
+                _alert_trade(symbol, side, "💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
 
-            if not t["tp3_hit"] and price >= tp3:
+            if (not t["tp3_hit"]) and hit_tp_long(price, tp3):
                 t["tp1_hit"] = True
                 t["tp2_hit"] = True
                 t["tp3_hit"] = True
-                alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
                 t["closed"] = True
+                t["close_reason"] = "tp3"
+                _alert_trade(symbol, side, "🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
 
-            # SL / BE nur prüfen, wenn Trade nicht schon durch Full TP geschlossen wurde
+            # Nur wenn noch offen
             if not t["closed"]:
-                if not t["tp1_hit"] and not t["sl_hit"] and price <= sl:
+                if (not t["tp1_hit"]) and (not t["sl_hit"]) and hit_sl_long(price, sl):
                     t["sl_hit"] = True
-                    alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
                     t["closed"] = True
-                elif t["tp1_hit"] and price <= entry:
-                    alert("💰 *Trade teilweise im Gewinn geschlossen – TP1/TP2 wurden erreicht, Rest auf Entry beendet.*")
+                    t["close_reason"] = "sl"
+                    _alert_trade(symbol, side, "🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
+                elif t["tp1_hit"] and back_to_entry_long(price, entry):
                     t["closed"] = True
+                    t["close_reason"] = "be_after_tp"
+                    if t.get("tp2_hit"):
+                        _alert_trade(symbol, side, "💰 *Trade teilweise im Gewinn geschlossen – TP1 + TP2 wurden erreicht, Rest auf Entry beendet.*")
+                    else:
+                        _alert_trade(symbol, side, "💰 *Trade teilweise im Gewinn geschlossen – TP1 wurde erreicht, Rest auf Entry beendet.*")
 
+        # SHORT
         elif side == "short":
-            # TP-Kette bewusst separat prüfen (kein elif), damit bei schnellen Moves
-            # mehrere Ziele in einem Poll sauber nachgezogen werden.
-            if not t["tp1_hit"] and price <= tp1:
+            if (not t["tp1_hit"]) and hit_tp_short(price, tp1):
                 t["tp1_hit"] = True
-                alert("💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
+                _alert_trade(symbol, side, "💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
 
-            if not t["tp2_hit"] and price <= tp2:
+            if (not t["tp2_hit"]) and hit_tp_short(price, tp2):
                 t["tp1_hit"] = True
                 t["tp2_hit"] = True
-                alert("💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
+                _alert_trade(symbol, side, "💶 *TP2 erreicht – weiter geht’s! Full TP in Sicht!* ✨")
 
-            if not t["tp3_hit"] and price <= tp3:
+            if (not t["tp3_hit"]) and hit_tp_short(price, tp3):
                 t["tp1_hit"] = True
                 t["tp2_hit"] = True
                 t["tp3_hit"] = True
-                alert("🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
                 t["closed"] = True
+                t["close_reason"] = "tp3"
+                _alert_trade(symbol, side, "🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
 
-            # SL / BE nur prüfen, wenn Trade nicht schon durch Full TP geschlossen wurde
             if not t["closed"]:
-                if not t["tp1_hit"] and not t["sl_hit"] and price >= sl:
+                if (not t["tp1_hit"]) and (not t["sl_hit"]) and hit_sl_short(price, sl):
                     t["sl_hit"] = True
-                    alert("🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
                     t["closed"] = True
-                elif t["tp1_hit"] and price >= entry:
-                    alert("💰 *Trade teilweise im Gewinn geschlossen – TP1/TP2 wurden erreicht, Rest auf Entry beendet.*")
+                    t["close_reason"] = "sl"
+                    _alert_trade(symbol, side, "🛑 *SL erreicht – schade. Wir bewerten neu und kommen stärker zurück.*")
+                elif t["tp1_hit"] and back_to_entry_short(price, entry):
                     t["closed"] = True
+                    t["close_reason"] = "be_after_tp"
+                    if t.get("tp2_hit"):
+                        _alert_trade(symbol, side, "💰 *Trade teilweise im Gewinn geschlossen – TP1 + TP2 wurden erreicht, Rest auf Entry beendet.*")
+                    else:
+                        _alert_trade(symbol, side, "💰 *Trade teilweise im Gewinn geschlossen – TP1 wurde erreicht, Rest auf Entry beendet.*")
+
+        else:
+            log_error(f"Ungültige Trade-Side in trades.json: {side} ({symbol})")
 
         updated.append(t)
 
@@ -509,13 +588,14 @@ def check_trades():
 
 
 def monitor_loop():
-    send_telegram("✅ *Trade-Monitor gestartet*")
+    send_telegram("✅ *Trade-Monitor gestartet*", retries=1)
+    log_info(f"🔁 VIP Monitor aktiv (Intervall {MONITOR_POLL_SEC}s)")
     while True:
         try:
             check_trades()
         except Exception as e:
-            log_error(f"Hauptfehler: {e}")
-        time.sleep(15)
+            log_error(f"Hauptfehler Monitor: {e}")
+        time.sleep(MONITOR_POLL_SEC)
 
 
 def start_monitor_delayed():
@@ -523,9 +603,8 @@ def start_monitor_delayed():
     monitor_loop()
 
 # =============================================================================
-# BOT SIGNAL HUB (NEU)
+# BOT SIGNAL HUB (für cTrader-Hub, unverändert drin)
 # =============================================================================
-
 def load_bot_signals():
     with _lock_bot:
         data = _safe_read_json(BOT_SIGNALS_FILE, [])
@@ -604,7 +683,7 @@ def save_bot_signal(symbol, side, entry, tf, slf=None, tv_time=None, raw=None):
         "id": sig_id,
         "cmd": "ENTRY",
         "symbol": symbol,
-        "side": side,  # internal: long/short
+        "side": side,
         "tf": tf,
         "entry": float(entry),
         "slf": float(slf) if slf is not None else None,
@@ -622,24 +701,12 @@ def save_bot_signal(symbol, side, entry, tf, slf=None, tv_time=None, raw=None):
 
 
 def next_signal_for_client(client_id: str):
-    """Lieferlogik:
-
-    - Wenn der Client neu ist und BOT_NEW_CLIENT_BASELINE=1:
-      => KEIN altes Signal liefern (Baseline setzen), damit beim Serverstart kein Trade aufgeht.
-
-    - Danach: nächstes Signal nach last_ack liefern.
-    """
-
     signals = load_bot_signals()
     if not signals:
         return None
 
     last_ack = get_client_last_ack(client_id)
 
-    # ✅ Neuer Client:
-    # Standard: baseline setzen (altes Signal NICHT ausliefern), damit beim Serverstart kein Trade aufgeht.
-    # Aber: wenn das neueste Signal "frisch" ist (<= BOT_BASELINE_GRACE_SEC), liefern wir es aus,
-    # damit das erste Live-Signal nicht verschluckt wird.
     if not last_ack:
         if BOT_NEW_CLIENT_BASELINE and client_id:
             newest = signals[-1]
@@ -649,7 +716,6 @@ def next_signal_for_client(client_id: str):
                 if age <= float(BOT_BASELINE_GRACE_SEC):
                     return newest
 
-            # älter -> baseline setzen, nichts liefern
             try:
                 last_id = str(newest.get("id", "")).strip()
                 if last_id:
@@ -658,7 +724,6 @@ def next_signal_for_client(client_id: str):
                 pass
             return None
 
-        # Fallback: doch das letzte liefern
         return signals[-1]
 
     idx = -1
@@ -678,7 +743,6 @@ def next_signal_for_client(client_id: str):
 # =============================================================================
 # ROUTES
 # =============================================================================
-
 @app.route("/")
 def health():
     return "✅ Monitor läuft", 200
@@ -693,9 +757,20 @@ def show_trades():
         return f"Fehler beim Laden: {e}", 500
 
 
+@app.route("/monitor_status", methods=["GET"])
+def monitor_status():
+    return jsonify(
+        {
+            "run_monitor": RUN_MONITOR,
+            "monitor_poll_sec": MONITOR_POLL_SEC,
+            "monitor_debug": MONITOR_DEBUG,
+            "trigger_eps_pct": TRIGGER_EPS_PCT,
+            "metals_cooldown_until": METALS_API_COOLDOWN_UNTIL,
+        }
+    ), 200
+
 # ---------------------------------------------------------------------
 # VIP: /webhook
-# Payload: {"key":"RTBOT","cmd":"ENTRY","side":"LONG","symbol":"{{ticker}}","tf":"{{interval}}","price":"{{close}}","time":"{{time}}"}
 # ---------------------------------------------------------------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -714,14 +789,14 @@ def webhook():
         side = normalize_side(data.get("side") or data.get("direction"))
         entry = parse_entry(data)
 
-        if not symbol or side not in ["long", "short"] or entry <= 0:
+        if not symbol or side not in {"long", "short"} or entry <= 0:
             return "❌ Ungültige Daten (symbol/side/entry)", 400
 
         sl = calc_sl(entry, side)
         tp1, tp2, tp3 = calc_tp(entry, sl, side, symbol)
 
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
-        send_telegram(msg)
+        send_telegram(msg, retries=1)
 
         meta = {"tf": data.get("tf"), "time": data.get("time"), "raw": {"cmd": cmd}}
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta=meta)
@@ -740,26 +815,25 @@ def add_manual():
 
         symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
         side = normalize_side(data.get("side"))
-        entry = float(data.get("entry", 0) or 0)
+        entry = parse_float(data.get("entry")) or 0.0
 
-        sl = float(data.get("sl", 0) or 0)
-        tp1 = float(data.get("tp1", 0) or 0)
-        tp2 = float(data.get("tp2", 0) or 0)
-        tp3 = float(data.get("tp3", 0) or 0)
+        sl = parse_float(data.get("sl")) or 0.0
+        tp1 = parse_float(data.get("tp1")) or 0.0
+        tp2 = parse_float(data.get("tp2")) or 0.0
+        tp3 = parse_float(data.get("tp3")) or 0.0
 
-        if not all([symbol, entry, side, sl, tp1, tp2, tp3]) or side not in ["long", "short"]:
+        if not all([symbol, entry, side, sl, tp1, tp2, tp3]) or side not in {"long", "short"}:
             return "❌ Ungültige Daten", 400
 
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
-        send_telegram(msg)
+        send_telegram(msg, retries=1)
 
         save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta={"manual": True})
         return "✅ Manuell hinzugefügt", 200
 
     except Exception as e:
-        log_error(f"❌ Fehler beim manuellen Import: {e}")
+        log_error(f"Fehler beim manuellen Import: {e}")
         return f"❌ Fehler: {e}", 500
-
 
 # ---------------------------------------------------------------------
 # BOT: Status / Toggle
@@ -781,7 +855,6 @@ def bot_toggle():
     save_bot_state(st)
     return jsonify(st), 200
 
-
 # ---------------------------------------------------------------------
 # BOT: Signale lesen
 # ---------------------------------------------------------------------
@@ -798,7 +871,6 @@ def bot_signals_get():
     except Exception as e:
         return f"Fehler: {e}", 500
 
-
 # ---------------------------------------------------------------------
 # BOT: next/ack
 # ---------------------------------------------------------------------
@@ -807,15 +879,11 @@ def bot_next():
     client_id = str(request.args.get("client", "")).strip()
     sig = next_signal_for_client(client_id)
 
-    # Basis (wie bisher)
     payload = {"ok": True, "signal": sig}
 
-    # Wenn es ein Signal gibt: zusätzlich FLACH (Top-Level) ausgeben,
-    # damit cTrader-cBots es finden, auch wenn sie NICHT signal.{...} lesen.
     if sig:
         s = dict(sig)
 
-        # side kompatibel machen: long/short -> LONG/SHORT + BUY/SELL
         side_lc = (s.get("side") or "").lower()
         if side_lc == "long":
             side_u = "LONG"
@@ -827,15 +895,12 @@ def bot_next():
         s["side"] = side_u
         s["direction"] = side_u
         s["action"] = "BUY" if side_u == "LONG" else "SELL" if side_u == "SHORT" else ""
-
-        # Aliase (manche Bots erwarten andere Feldnamen)
         s["sl"] = s.get("slf")
         s["timeframe"] = s.get("tf")
 
         payload.update(s)
         payload["signal"] = s
 
-        # ✅ Auto-ACK: verhindert doppelte Trades, wenn dein cBot kein /bot_ack sendet
         if BOT_AUTO_ACK_ON_GET and client_id:
             try:
                 sid = str(s.get("id", "")).strip()
@@ -862,10 +927,8 @@ def bot_ack():
     remember_client_ack(client_id, sig_id)
     return jsonify({"ok": True, "client": client_id, "acked": sig_id}), 200
 
-
 # ---------------------------------------------------------------------
 # BOT: /bot_webhook
-# Payload: {"key":"RTBOT","cmd":"ENTRY","side":"LONG","symbol":"{{ticker}}","tf":"{{interval}}","entry":"{{plot(\"entry\")}}","slf":"{{plot(\"slf\")}}","time":"{{time}}"}
 # ---------------------------------------------------------------------
 @app.route("/bot_webhook", methods=["POST"])
 def bot_webhook():
@@ -891,7 +954,7 @@ def bot_webhook():
         tv_time = str(data.get("time") or "").strip()
         slf = parse_float(data.get("slf"))
 
-        if not symbol or side not in ["long", "short"] or entry <= 0:
+        if not symbol or side not in {"long", "short"} or entry <= 0:
             return "❌ Ungültige Daten (symbol/side/entry)", 400
 
         ok, why, sig_id = save_bot_signal(
@@ -907,16 +970,14 @@ def bot_webhook():
         if why == "duplicate":
             return "✅ Duplicate ignored", 200
 
-        # absichtlich KEIN Telegram hier
         return jsonify({"ok": True, "saved": ok, "id": sig_id}), 200
 
     except Exception as e:
         print("❌ BOT Fehler:", str(e))
         return f"❌ Fehler: {str(e)}", 400
 
-
 # =============================================================================
-# STARTUP (ALT Monitor bleibt)
+# STARTUP
 # =============================================================================
 if RUN_MONITOR:
     threading.Thread(target=start_monitor_delayed, daemon=True).start()
