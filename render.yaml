@@ -2,16 +2,41 @@ services:
   - type: web
     name: trade-monitor
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
-
     plan: starter
+
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn main:app --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120
+    healthCheckPath: /
+
     envVars:
+      # Logging / Runtime
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+      # Bot-Verhalten (optional, aber sinnvoll)
+      - key: RUN_MONITOR
+        value: "1"
+      - key: BOT_NEW_CLIENT_BASELINE
+        value: "1"
+      - key: BOT_AUTO_ACK_ON_GET
+        value: "1"
+      - key: BOT_BASELINE_GRACE_SEC
+        value: "180"
+
+      # Secrets / API-Keys (im Render Dashboard setzen)
+      - key: RT_SECRET
+        sync: false
+      # Optional getrennt statt RT_SECRET:
+      # - key: VIP_SECRET
+      #   sync: false
+      # - key: BOT_SECRET
+      #   sync: false
+
       - key: TELEGRAM_BOT_TOKEN
-        fromEnvVar: TELEGRAM_BOT_TOKEN
+        sync: false
       - key: TELEGRAM_CHAT_ID
-        fromEnvVar: TELEGRAM_CHAT_ID
+        sync: false
       - key: METALS_API_KEY
-        fromEnvVar: METALS_API_KEY
+        sync: false
       - key: TWELVE_API_KEY
-        fromEnvVar: TWELVE_API_KEY
+        sync: false
