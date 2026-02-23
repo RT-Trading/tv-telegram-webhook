@@ -100,11 +100,11 @@ def log_error(text: str):
             f.write(line + "\n")
     except Exception:
         pass
-    print(f"⚠️ {line}")
+    print(f"⚠️ {line}", flush=True)
 
 
 def log_info(text: str):
-    print(text)
+    print(text, flush=True)
 
 
 def _safe_read_json(path: str, default):
@@ -268,7 +268,7 @@ def send_telegram(text: str, retries: int = 1):
     for attempt in range(1, attempts + 1):
         try:
             r = _http.post(url, data=payload, timeout=10)
-            print("📱 Telegram Response:", r.status_code, r.text)
+            print("📱 Telegram Response:", r.status_code, r.text, flush=True)
             if r.status_code == 200:
                 return True
             last_err = f"HTTP {r.status_code}: {r.text}"
@@ -466,7 +466,8 @@ def _debug_trade_state(t: Dict[str, Any], price: float):
         f"{symbol} {side} | price={price} entry={t.get('entry')} sl={t.get('sl')} "
         f"tp1={t.get('tp1')} tp2={t.get('tp2')} tp3={t.get('tp3')} | "
         f"tp1_hit={t.get('tp1_hit')} tp2_hit={t.get('tp2_hit')} tp3_hit={t.get('tp3_hit')} "
-        f"sl_hit={t.get('sl_hit')} closed={t.get('closed')}"
+        f"sl_hit={t.get('sl_hit')} closed={t.get('closed')}",
+        flush=True,
     )
 
 
@@ -776,7 +777,7 @@ def monitor_status():
 def webhook():
     try:
         data = request.get_json(force=True) or {}
-        print("📬 VIP Webhook empfangen:", data)
+        print("📬 VIP Webhook empfangen:", data, flush=True)
 
         if not require_secret(data, "vip"):
             return "❌ Unauthorized", 401
@@ -804,7 +805,7 @@ def webhook():
         return "✅ OK", 200
 
     except Exception as e:
-        print("❌ VIP Fehler:", str(e))
+        print("❌ VIP Fehler:", str(e), flush=True)
         return f"❌ Fehler: {str(e)}", 400
 
 
@@ -934,7 +935,7 @@ def bot_ack():
 def bot_webhook():
     try:
         data = request.get_json(force=True) or {}
-        print("🤖 BOT Webhook empfangen:", data)
+        print("🤖 BOT Webhook empfangen:", data, flush=True)
 
         if not require_secret(data, "bot"):
             return "❌ Unauthorized", 401
@@ -973,7 +974,7 @@ def bot_webhook():
         return jsonify({"ok": True, "saved": ok, "id": sig_id}), 200
 
     except Exception as e:
-        print("❌ BOT Fehler:", str(e))
+        print("❌ BOT Fehler:", str(e), flush=True)
         return f"❌ Fehler: {str(e)}", 400
 
 # =============================================================================
