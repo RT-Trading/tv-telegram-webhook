@@ -13,9 +13,17 @@ services:
       - key: PYTHONUNBUFFERED
         value: "1"
 
-      # Bot-Verhalten (optional, aber sinnvoll)
+      # VIP Monitor (Telegram)
       - key: RUN_MONITOR
         value: "1"
+      - key: MONITOR_POLL_SEC
+        value: "3"
+      - key: MONITOR_DEBUG
+        value: "1"
+      - key: TRIGGER_EPS_PCT
+        value: "0.00005"
+
+      # Bot-Verhalten (cTrader-Hub)
       - key: BOT_NEW_CLIENT_BASELINE
         value: "1"
       - key: BOT_AUTO_ACK_ON_GET
