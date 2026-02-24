@@ -2,8 +2,8 @@ import os
 import time
 import json
 import threading
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional
 
 from flask import Flask, request, jsonify
 import requests
@@ -18,8 +18,9 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 METALS_API_KEY = os.environ.get("METALS_API_KEY", "").strip()
 TWELVE_API_KEY = os.environ.get("TWELVE_API_KEY", "").strip()
 
-# MetalsAPI bei 429 temporär aussetzen
+# API Cooldowns bei 429
 METALS_API_COOLDOWN_UNTIL = 0.0
+TWELVE_API_COOLDOWN_UNTIL = 0.0
 
 # Security
 RT_SECRET = os.environ.get("RT_SECRET", "").strip()
@@ -40,18 +41,12 @@ RUN_MONITOR = os.environ.get("RUN_MONITOR", "1").strip() != "0"
 # =============================================================================
 # MONITOR TUNING (VIP TELEGRAM)
 # =============================================================================
-# Polling für VIP-Trade-Monitor (wichtig für TP3/BE Erkennung)
 MONITOR_POLL_SEC = max(1, int(os.environ.get("MONITOR_POLL_SEC", "3")))
-
-# Debug-Logs für Monitor (Preis/TP/Flags)
 MONITOR_DEBUG = os.environ.get("MONITOR_DEBUG", "1").strip() != "0"
-
-# Kleine Toleranz gegen Rundung/Feed-Unterschiede (relativ zum Zielpreis)
-# Beispiel 0.00005 = 0.005%
 TRIGGER_EPS_PCT = float(os.environ.get("TRIGGER_EPS_PCT", "0.00005"))
 
 # =============================================================================
-# BOT DELIVERY BEHAVIOR (für cTrader-Hub, bleibt drin)
+# BOT DELIVERY BEHAVIOR (cTrader-Hub)
 # =============================================================================
 BOT_NEW_CLIENT_BASELINE = os.environ.get("BOT_NEW_CLIENT_BASELINE", "1").strip() != "0"
 BOT_AUTO_ACK_ON_GET = os.environ.get("BOT_AUTO_ACK_ON_GET", "1").strip() != "0"
@@ -65,7 +60,7 @@ _lock_bot = threading.RLock()
 _lock_state = threading.RLock()
 _lock_clients = threading.RLock()
 
-# requests Session (leichter/stabiler)
+# requests Session
 _http = requests.Session()
 
 # =============================================================================
@@ -73,6 +68,25 @@ _http = requests.Session()
 # =============================================================================
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def next_utc_midnight_ts() -> float:
+    now = datetime.now(timezone.utc)
+    tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    return tomorrow.timestamp()
+
+
+def next_utc_month_ts() -> float:
+    now = datetime.now(timezone.utc)
+    year = now.year
+    month = now.month
+    if month == 12:
+        year += 1
+        month = 1
+    else:
+        month += 1
+    first_next_month = datetime(year, month, 1, 0, 0, 0, tzinfo=timezone.utc)
+    return first_next_month.timestamp()
 
 
 def parse_iso_utc(s: str):
@@ -252,10 +266,11 @@ def back_to_entry_long(price: float, entry: float) -> bool:
 def back_to_entry_short(price: float, entry: float) -> bool:
     return price >= (entry - trigger_eps_abs(entry))
 
+
 # =============================================================================
 # TELEGRAM
 # =============================================================================
-def send_telegram(text: str, retries: int = 1):
+def send_telegram(text: str, retries: int = 1) -> bool:
     if not BOT_TOKEN or not CHAT_ID:
         log_error("Telegram nicht konfiguriert (BOT_TOKEN/CHAT_ID fehlt)")
         return False
@@ -280,6 +295,7 @@ def send_telegram(text: str, retries: int = 1):
 
     log_error(f"Telegram Fehler: {last_err}")
     return False
+
 
 # =============================================================================
 # TRADES (VIP-Monitor)
@@ -320,8 +336,9 @@ def save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta=None):
     trades.append(trade)
     save_trades(trades)
 
+
 # =============================================================================
-# VIP: SL/TP/MSG
+# VIP: SL/TP/MSG (UNVERÄNDERT bei Berechnung)
 # =============================================================================
 def calc_sl(entry: float, side: str) -> float:
     risk_pct = 0.005
@@ -361,6 +378,7 @@ def format_message(symbol: str, entry: float, sl: float, tp1: float, tp2: float,
 🔀 TP1 erreicht → *Breakeven setzen*.
 """
 
+
 # =============================================================================
 # SYMBOL-MAPPING FÜR TWELVE DATA
 # =============================================================================
@@ -379,11 +397,12 @@ def convert_symbol_for_twelve(symbol: str) -> str:
     }
     return symbol_map.get(symbol.upper(), symbol)
 
+
 # =============================================================================
 # PREISABFRAGE (VIP-Monitor)
 # =============================================================================
 def get_price(symbol: str) -> float:
-    global METALS_API_COOLDOWN_UNTIL
+    global METALS_API_COOLDOWN_UNTIL, TWELVE_API_COOLDOWN_UNTIL
 
     symbol = symbol.upper()
     coingecko_map = {
@@ -393,60 +412,112 @@ def get_price(symbol: str) -> float:
         "DOGEUSD": "dogecoin",
     }
 
-    try:
-        # Crypto via Coingecko
-        if symbol in coingecko_map:
+    # ---------------------------------------------------------
+    # 1) Crypto via CoinGecko
+    # ---------------------------------------------------------
+    if symbol in coingecko_map:
+        try:
             r = _http.get(
                 f"https://api.coingecko.com/api/v3/simple/price?ids={coingecko_map[symbol]}&vs_currencies=usd",
                 timeout=10,
             )
             data = r.json()
             return float(data[coingecko_map[symbol]]["usd"])
+        except Exception as e:
+            log_error(f"Preisabruf Fehler (CoinGecko) für {symbol}: {e}")
+            return 0.0
 
-        # Metals via metals-api (mit Cooldown)
-        if symbol in {"XAUUSD", "SILVER", "XAGUSD"}:
-            base = "XAU" if "XAU" in symbol else "XAG"
+    # ---------------------------------------------------------
+    # 2) Metals via MetalsAPI (mit Cooldown)
+    # ---------------------------------------------------------
+    if symbol in {"XAUUSD", "SILVER", "XAGUSD"}:
+        base = "XAU" if "XAU" in symbol else "XAG"
 
-            if METALS_API_KEY and time.time() >= METALS_API_COOLDOWN_UNTIL:
-                try:
-                    r = _http.get(
-                        f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD",
-                        timeout=10,
-                    )
-                    data = r.json()
+        if METALS_API_KEY and time.time() >= METALS_API_COOLDOWN_UNTIL:
+            try:
+                r = _http.get(
+                    f"https://metals-api.com/api/latest?access_key={METALS_API_KEY}&base={base}&symbols=USD",
+                    timeout=10,
+                )
+                raw = r.json()
 
-                    if data.get("success") and "rates" in data and "USD" in data["rates"]:
-                        val = float(data["rates"]["USD"])
-                        if val < 1:
-                            val = 1 / val
-                        return val
+                # metals-api liefert teils {"data": {...}}
+                data = raw.get("data", raw) if isinstance(raw, dict) else raw
 
-                    err = data.get("error", {}) if isinstance(data, dict) else {}
-                    if isinstance(err, dict) and int(err.get("code", 0) or 0) == 429:
+                if (
+                    isinstance(data, dict)
+                    and data.get("success") is True
+                    and "rates" in data
+                    and "USD" in data["rates"]
+                ):
+                    val = float(data["rates"]["USD"])
+                    if val < 1:
+                        val = 1 / val
+                    return val
+
+                # Fehler robust lesen (nested / plain)
+                err = {}
+                if isinstance(data, dict):
+                    err = data.get("error", {}) or {}
+                if not err and isinstance(raw, dict):
+                    err = raw.get("error", {}) or {}
+
+                code = int((err.get("code", 0) or 0)) if isinstance(err, dict) else 0
+                info = str(err.get("info", "")) if isinstance(err, dict) else ""
+
+                if code == 429:
+                    # Monatslimit -> bis Monatswechsel pausieren
+                    if "monthly" in info.lower():
+                        METALS_API_COOLDOWN_UNTIL = next_utc_month_ts()
+                        log_error("MetalsAPI Monatslimit erreicht (429) – Pause bis Monatswechsel, nutze TwelveData-Fallback.")
+                    else:
                         METALS_API_COOLDOWN_UNTIL = time.time() + 3600
-                        log_error("MetalsAPI Limit erreicht (429) – 1h nur Fallback (TwelveData).")
+                        log_error("MetalsAPI Limit erreicht (429) – 1h Pause, nutze TwelveData-Fallback.")
+                else:
+                    log_error(f"MetalsAPI Fehler für {symbol}: {raw}")
 
-                    raise Exception(f"MetalsAPI Fehler: {data}")
-                except Exception as e:
-                    log_error(f"MetalsAPI Fallback für {symbol}: {e}")
+            except Exception as e:
+                log_error(f"MetalsAPI Fallback für {symbol}: {e}")
 
-        # Fallback TwelveData
-        if not TWELVE_API_KEY:
-            raise Exception("TWELVE_API_KEY fehlt (Fallback nicht möglich)")
+    # ---------------------------------------------------------
+    # 3) TwelveData Fallback (mit Cooldown)
+    # ---------------------------------------------------------
+    if not TWELVE_API_KEY:
+        log_error("TWELVE_API_KEY fehlt (Fallback nicht möglich)")
+        return 0.0
 
+    if time.time() < TWELVE_API_COOLDOWN_UNTIL:
+        return 0.0
+
+    try:
         symbol_twelve = convert_symbol_for_twelve(symbol)
         r = _http.get(
             f"https://api.twelvedata.com/price?symbol={symbol_twelve}&apikey={TWELVE_API_KEY}",
             timeout=10,
         )
         data = r.json()
+
         if "price" in data and str(data["price"]).strip():
             return float(data["price"])
-        raise Exception(f"Twelve Data Fehler: {data}")
+
+        code = int((data.get("code", 0) or 0)) if isinstance(data, dict) else 0
+        msg = str(data.get("message", "")) if isinstance(data, dict) else ""
+
+        if code == 429:
+            TWELVE_API_COOLDOWN_UNTIL = next_utc_midnight_ts()
+            if "daily" in msg.lower() or "credits" in msg.lower():
+                log_error("TwelveData Daily Limit erreicht (429) – Pause bis nächste UTC-Mitternacht.")
+            else:
+                log_error("TwelveData Limit erreicht (429) – Pause bis nächste UTC-Mitternacht.")
+            return 0.0
+
+        log_error(f"Twelve Data Fehler für {symbol}: {data}")
+        return 0.0
 
     except Exception as e:
-        log_error(f"Preisabruf Fehler für {symbol}: {e}")
+        log_error(f"Preisabruf Fehler (TwelveData) für {symbol}: {e}")
         return 0.0
+
 
 # =============================================================================
 # MONITOR LOGIK (VIP)
@@ -473,9 +544,12 @@ def _debug_trade_state(t: Dict[str, Any], price: float):
 
 def check_trades():
     trades = load_trades()
-    updated: List[Dict[str, Any]] = []
 
-    # Preis pro Symbol nur 1x pro Durchlauf
+    # Keine offenen Trades -> keine Preisabfragen
+    if not any(not t.get("closed") for t in trades):
+        return
+
+    updated: List[Dict[str, Any]] = []
     price_cache: Dict[str, float] = {}
 
     for t in trades:
@@ -514,7 +588,6 @@ def check_trades():
 
         # LONG
         if side == "long":
-            # TP-Kette separat, damit mehrere Ziele in einem Poll verarbeitet werden
             if (not t["tp1_hit"]) and hit_tp_long(price, tp1):
                 t["tp1_hit"] = True
                 _alert_trade(symbol, side, "💶 *TP1 erreicht – BE setzen oder Trade managen. Wir machen uns auf den Weg zu TP2!* 🚀")
@@ -532,7 +605,6 @@ def check_trades():
                 t["close_reason"] = "tp3"
                 _alert_trade(symbol, side, "🏆 *Full TP erreicht – Glückwunsch an alle! 💶💶💰🥳*")
 
-            # Nur wenn noch offen
             if not t["closed"]:
                 if (not t["tp1_hit"]) and (not t["sl_hit"]) and hit_sl_long(price, sl):
                     t["sl_hit"] = True
@@ -603,8 +675,9 @@ def start_monitor_delayed():
     time.sleep(3)
     monitor_loop()
 
+
 # =============================================================================
-# BOT SIGNAL HUB (für cTrader-Hub, unverändert drin)
+# BOT SIGNAL HUB (cTrader-Hub)
 # =============================================================================
 def load_bot_signals():
     with _lock_bot:
@@ -741,6 +814,7 @@ def next_signal_for_client(client_id: str):
 
     return None
 
+
 # =============================================================================
 # ROUTES
 # =============================================================================
@@ -760,15 +834,22 @@ def show_trades():
 
 @app.route("/monitor_status", methods=["GET"])
 def monitor_status():
+    now_ts = time.time()
     return jsonify(
         {
             "run_monitor": RUN_MONITOR,
             "monitor_poll_sec": MONITOR_POLL_SEC,
             "monitor_debug": MONITOR_DEBUG,
             "trigger_eps_pct": TRIGGER_EPS_PCT,
+
             "metals_cooldown_until": METALS_API_COOLDOWN_UNTIL,
+            "metals_cooldown_active": now_ts < METALS_API_COOLDOWN_UNTIL,
+
+            "twelve_cooldown_until": TWELVE_API_COOLDOWN_UNTIL,
+            "twelve_cooldown_active": now_ts < TWELVE_API_COOLDOWN_UNTIL,
         }
     ), 200
+
 
 # ---------------------------------------------------------------------
 # VIP: /webhook
@@ -776,8 +857,11 @@ def monitor_status():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     try:
-        data = request.get_json(force=True) or {}
+        data = request.get_json(force=True, silent=True) or {}
         print("📬 VIP Webhook empfangen:", data, flush=True)
+
+        if not isinstance(data, dict):
+            return "❌ Ungültiges JSON", 400
 
         if not require_secret(data, "vip"):
             return "❌ Unauthorized", 401
@@ -812,7 +896,9 @@ def webhook():
 @app.route("/add_manual", methods=["POST"])
 def add_manual():
     try:
-        data = request.get_json(force=True) or {}
+        data = request.get_json(force=True, silent=True) or {}
+        if not isinstance(data, dict):
+            return "❌ Ungültiges JSON", 400
 
         symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
         side = normalize_side(data.get("side"))
@@ -836,6 +922,7 @@ def add_manual():
         log_error(f"Fehler beim manuellen Import: {e}")
         return f"❌ Fehler: {e}", 500
 
+
 # ---------------------------------------------------------------------
 # BOT: Status / Toggle
 # ---------------------------------------------------------------------
@@ -846,7 +933,10 @@ def bot_status():
 
 @app.route("/bot_toggle", methods=["POST"])
 def bot_toggle():
-    data = request.get_json(force=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
+    if not isinstance(data, dict):
+        return "❌ Ungültiges JSON", 400
+
     if not require_secret(data, "bot"):
         return "❌ Unauthorized", 401
 
@@ -855,6 +945,7 @@ def bot_toggle():
         st["enabled"] = bool(data.get("enabled"))
     save_bot_state(st)
     return jsonify(st), 200
+
 
 # ---------------------------------------------------------------------
 # BOT: Signale lesen
@@ -871,6 +962,7 @@ def bot_signals_get():
         return json.dumps(signals[-limit:], indent=2), 200, {"Content-Type": "application/json"}
     except Exception as e:
         return f"Fehler: {e}", 500
+
 
 # ---------------------------------------------------------------------
 # BOT: next/ack
@@ -915,7 +1007,10 @@ def bot_next():
 
 @app.route("/bot_ack", methods=["POST"])
 def bot_ack():
-    data = request.get_json(force=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
+    if not isinstance(data, dict):
+        return "❌ Ungültiges JSON", 400
+
     if not require_secret(data, "bot"):
         return "❌ Unauthorized", 401
 
@@ -928,14 +1023,18 @@ def bot_ack():
     remember_client_ack(client_id, sig_id)
     return jsonify({"ok": True, "client": client_id, "acked": sig_id}), 200
 
+
 # ---------------------------------------------------------------------
 # BOT: /bot_webhook
 # ---------------------------------------------------------------------
 @app.route("/bot_webhook", methods=["POST"])
 def bot_webhook():
     try:
-        data = request.get_json(force=True) or {}
+        data = request.get_json(force=True, silent=True) or {}
         print("🤖 BOT Webhook empfangen:", data, flush=True)
+
+        if not isinstance(data, dict):
+            return "❌ Ungültiges JSON", 400
 
         if not require_secret(data, "bot"):
             return "❌ Unauthorized", 401
@@ -976,6 +1075,7 @@ def bot_webhook():
     except Exception as e:
         print("❌ BOT Fehler:", str(e), flush=True)
         return f"❌ Fehler: {str(e)}", 400
+
 
 # =============================================================================
 # STARTUP
