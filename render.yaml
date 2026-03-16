@@ -27,9 +27,15 @@ services:
       - key: BOT_NEW_CLIENT_BASELINE
         value: "1"
       - key: BOT_AUTO_ACK_ON_GET
-        value: "1"
+        value: "0"
       - key: BOT_BASELINE_GRACE_SEC
-        value: "180"
+        value: "90"
+      - key: BOT_SIGNAL_TTL_SEC
+        value: "90"
+      - key: BOT_REQUIRE_TIME
+        value: "1"
+      - key: BOT_DEFAULT_CLIENT
+        value: "ctrader1"
 
       # Secrets / API-Keys (im Render Dashboard setzen)
       - key: RT_SECRET
