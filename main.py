@@ -2,6 +2,7 @@ import os
 import time
 import json
 import threading
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -51,6 +52,9 @@ TRIGGER_EPS_PCT = float(os.environ.get("TRIGGER_EPS_PCT", "0.00005"))
 BOT_NEW_CLIENT_BASELINE = os.environ.get("BOT_NEW_CLIENT_BASELINE", "1").strip() != "0"
 BOT_AUTO_ACK_ON_GET = os.environ.get("BOT_AUTO_ACK_ON_GET", "1").strip() != "0"
 BOT_BASELINE_GRACE_SEC = int(os.environ.get("BOT_BASELINE_GRACE_SEC", "120"))
+BOT_SIGNAL_TTL_SEC = max(5, int(os.environ.get("BOT_SIGNAL_TTL_SEC", "90")))
+BOT_REQUIRE_TIME = os.environ.get("BOT_REQUIRE_TIME", "1").strip() != "0"
+BOT_DEFAULT_CLIENT = os.environ.get("BOT_DEFAULT_CLIENT", "default").strip() or "default"
 
 # =============================================================================
 # LOCKS
@@ -68,6 +72,10 @@ _http = requests.Session()
 # =============================================================================
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def utc_now_dt() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def next_utc_midnight_ts() -> float:
@@ -690,9 +698,20 @@ def save_bot_signals(signals):
         _safe_write_json_atomic(BOT_SIGNALS_FILE, signals)
 
 
-def build_signal_id(symbol: str, side: str, tf: str, t: str) -> str:
-    base = f"{symbol}_{side}_{tf}_{t}"
-    return base.replace(" ", "").replace(":", "").replace("-", "").replace(".", "")
+
+def normalize_client_id(client_id: str) -> str:
+    cid = str(client_id or "").strip()
+    return cid or BOT_DEFAULT_CLIENT
+
+
+def normalize_tf(tf: str) -> str:
+    return str(tf or "").strip()
+
+
+def build_signal_id(symbol: str, side: str, tf: str, t: str, entry: float, client_id: str) -> str:
+    payload = f"{symbol}|{side}|{tf}|{t}|{entry:.8f}|{normalize_client_id(client_id)}"
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:24]
+    return f"sig_{digest}"
 
 
 def load_bot_state():
@@ -723,16 +742,21 @@ def save_clients(d: dict):
 
 
 def remember_client_ack(client_id: str, sig_id: str):
-    if not client_id:
+    client_id = normalize_client_id(client_id)
+    if not sig_id:
         return
     d = load_clients()
-    d[client_id] = {"last_ack_id": sig_id, "acked_at": utc_now_iso()}
+    rec = d.get(client_id, {})
+    if not isinstance(rec, dict):
+        rec = {}
+    rec["last_ack_id"] = sig_id
+    rec["acked_at"] = utc_now_iso()
+    d[client_id] = rec
     save_clients(d)
 
 
 def get_client_last_ack(client_id: str):
-    if not client_id:
-        return None
+    client_id = normalize_client_id(client_id)
     d = load_clients()
     rec = d.get(client_id)
     if not isinstance(rec, dict):
@@ -740,21 +764,94 @@ def get_client_last_ack(client_id: str):
     return rec.get("last_ack_id")
 
 
-def save_bot_signal(symbol, side, entry, tf, slf=None, tv_time=None, raw=None):
+def _signal_effective_time(sig: dict):
+    dt = parse_iso_utc(sig.get("time"))
+    if dt:
+        return dt
+    return parse_iso_utc(sig.get("received_at"))
+
+
+def _signal_expiry_time(sig: dict):
+    explicit = parse_iso_utc(sig.get("expires_at"))
+    if explicit:
+        return explicit
+    base = _signal_effective_time(sig)
+    if not base:
+        return None
+    return base + timedelta(seconds=BOT_SIGNAL_TTL_SEC)
+
+
+def is_signal_expired(sig: dict, now_dt: Optional[datetime] = None) -> bool:
+    now_dt = now_dt or utc_now_dt()
+    expiry = _signal_expiry_time(sig)
+    if not expiry:
+        return False
+    return now_dt > expiry
+
+
+def cleanup_bot_signals():
     signals = load_bot_signals()
+    if not signals:
+        return []
+
+    now_dt = utc_now_dt()
+    cleaned = []
+    changed = False
+
+    for sig in signals:
+        if not isinstance(sig, dict):
+            changed = True
+            continue
+
+        sig.setdefault("client", BOT_DEFAULT_CLIENT)
+        sig.setdefault("received_at", utc_now_iso())
+
+        if "expires_at" not in sig:
+            eff = _signal_effective_time(sig)
+            if eff:
+                sig["expires_at"] = (eff + timedelta(seconds=BOT_SIGNAL_TTL_SEC)).isoformat().replace("+00:00", "Z")
+                changed = True
+
+        if is_signal_expired(sig, now_dt=now_dt):
+            changed = True
+            continue
+
+        cleaned.append(sig)
+
+    if BOT_SIGNALS_MAX > 0 and len(cleaned) > BOT_SIGNALS_MAX:
+        cleaned = cleaned[-BOT_SIGNALS_MAX:]
+        changed = True
+
+    if changed:
+        save_bot_signals(cleaned)
+
+    return cleaned
+
+
+def save_bot_signal(symbol, side, entry, tf, slf=None, tv_time=None, raw=None, client_id=None, sig_id=None):
+    signals = cleanup_bot_signals()
 
     tv_time = (tv_time or "").strip()
-    tf = (tf or "-").strip()
+    tf = normalize_tf(tf)
+    client_id = normalize_client_id(client_id)
 
-    sig_id = build_signal_id(symbol, side, tf, tv_time or utc_now_iso())
+    tv_dt = parse_iso_utc(tv_time)
+    if BOT_REQUIRE_TIME and not tv_dt:
+        return False, "missing_time", None
 
-    # Dedup (letzte 500 prüfen)
-    for s in reversed(signals[-500:]):
-        if s.get("id") == sig_id:
-            return False, "duplicate", sig_id
+    effective_dt = tv_dt or utc_now_dt()
+    received_at = utc_now_iso()
+    expires_at = (effective_dt + timedelta(seconds=BOT_SIGNAL_TTL_SEC)).isoformat().replace("+00:00", "Z")
+
+    final_id = str(sig_id or "").strip() or build_signal_id(symbol, side, tf, tv_time or received_at, float(entry), client_id)
+
+    # Dedup (letzte 1000 prüfen)
+    for s in reversed(signals[-1000:]):
+        if s.get("id") == final_id:
+            return False, "duplicate", final_id
 
     sig = {
-        "id": sig_id,
+        "id": final_id,
         "cmd": "ENTRY",
         "symbol": symbol,
         "side": side,
@@ -762,7 +859,9 @@ def save_bot_signal(symbol, side, entry, tf, slf=None, tv_time=None, raw=None):
         "entry": float(entry),
         "slf": float(slf) if slf is not None else None,
         "time": tv_time,
-        "received_at": utc_now_iso(),
+        "client": client_id,
+        "received_at": received_at,
+        "expires_at": expires_at,
         "raw": raw or {},
     }
 
@@ -771,47 +870,59 @@ def save_bot_signal(symbol, side, entry, tf, slf=None, tv_time=None, raw=None):
         signals = signals[-BOT_SIGNALS_MAX:]
 
     save_bot_signals(signals)
-    return True, "saved", sig_id
+    return True, "saved", final_id
+
+
+def _signal_matches_client(sig: dict, client_id: str) -> bool:
+    target = normalize_client_id(sig.get("client"))
+    return target == normalize_client_id(client_id)
 
 
 def next_signal_for_client(client_id: str):
-    signals = load_bot_signals()
+    client_id = normalize_client_id(client_id)
+    signals = cleanup_bot_signals()
     if not signals:
+        return None
+
+    relevant = [s for s in signals if _signal_matches_client(s, client_id)]
+    if not relevant:
         return None
 
     last_ack = get_client_last_ack(client_id)
 
     if not last_ack:
-        if BOT_NEW_CLIENT_BASELINE and client_id:
-            newest = signals[-1]
-            newest_dt = parse_iso_utc(newest.get("received_at") or newest.get("time"))
+        if BOT_NEW_CLIENT_BASELINE:
+            newest = relevant[-1]
+            newest_dt = _signal_effective_time(newest)
             if newest_dt:
-                age = (datetime.now(timezone.utc) - newest_dt).total_seconds()
+                age = (utc_now_dt() - newest_dt).total_seconds()
                 if age <= float(BOT_BASELINE_GRACE_SEC):
                     return newest
 
-            try:
-                last_id = str(newest.get("id", "")).strip()
-                if last_id:
-                    remember_client_ack(client_id, last_id)
-            except Exception:
-                pass
+            last_id = str(newest.get("id", "")).strip()
+            if last_id:
+                remember_client_ack(client_id, last_id)
             return None
 
-        return signals[-1]
+        return relevant[0]
 
-    idx = -1
-    for i, s in enumerate(signals):
-        if s.get("id") == last_ack:
-            idx = i
-            break
+    found_last = False
+    for sig in relevant:
+        if found_last:
+            return sig
+        if sig.get("id") == last_ack:
+            found_last = True
 
-    if idx < 0:
-        return signals[-1]
+    newest = relevant[-1]
+    newest_dt = _signal_effective_time(newest)
+    if newest_dt:
+        age = (utc_now_dt() - newest_dt).total_seconds()
+        if age <= float(BOT_BASELINE_GRACE_SEC):
+            return newest
 
-    if idx + 1 < len(signals):
-        return signals[idx + 1]
-
+    last_id = str(newest.get("id", "")).strip()
+    if last_id:
+        remember_client_ack(client_id, last_id)
     return None
 
 
@@ -865,6 +976,10 @@ def webhook():
 
         if not require_secret(data, "vip"):
             return "❌ Unauthorized", 401
+
+        route = str(data.get("route", "")).strip().lower()
+        if route and route != "telegram":
+            return "✅ Ignored (route)", 200
 
         cmd = (data.get("cmd") or "").strip().upper()
         if cmd and cmd != "ENTRY":
@@ -928,7 +1043,14 @@ def add_manual():
 # ---------------------------------------------------------------------
 @app.route("/bot_status", methods=["GET"])
 def bot_status():
-    return jsonify(load_bot_state()), 200
+    st = load_bot_state()
+    st["signal_ttl_sec"] = BOT_SIGNAL_TTL_SEC
+    st["require_time"] = BOT_REQUIRE_TIME
+    st["default_client"] = BOT_DEFAULT_CLIENT
+    st["auto_ack_on_get"] = BOT_AUTO_ACK_ON_GET
+    st["new_client_baseline"] = BOT_NEW_CLIENT_BASELINE
+    st["baseline_grace_sec"] = BOT_BASELINE_GRACE_SEC
+    return jsonify(st), 200
 
 
 @app.route("/bot_toggle", methods=["POST"])
@@ -953,7 +1075,7 @@ def bot_toggle():
 @app.route("/bot_signals", methods=["GET"])
 def bot_signals_get():
     try:
-        signals = load_bot_signals()
+        signals = cleanup_bot_signals()
         try:
             limit = int(request.args.get("limit", "200"))
         except Exception:
@@ -964,15 +1086,24 @@ def bot_signals_get():
         return f"Fehler: {e}", 500
 
 
+@app.route("/bot_cleanup", methods=["POST"])
+def bot_cleanup():
+    data = request.get_json(force=True, silent=True) or {}
+    if data and (not isinstance(data, dict) or not require_secret(data, "bot")):
+        return "❌ Unauthorized", 401
+    signals = cleanup_bot_signals()
+    return jsonify({"ok": True, "count": len(signals)}), 200
+
+
 # ---------------------------------------------------------------------
 # BOT: next/ack
 # ---------------------------------------------------------------------
 @app.route("/bot_next", methods=["GET"])
 def bot_next():
-    client_id = str(request.args.get("client", "")).strip()
+    client_id = normalize_client_id(request.args.get("client", ""))
     sig = next_signal_for_client(client_id)
 
-    payload = {"ok": True, "signal": sig}
+    payload = {"ok": True, "signal": None, "client": client_id}
 
     if sig:
         s = dict(sig)
@@ -990,17 +1121,15 @@ def bot_next():
         s["action"] = "BUY" if side_u == "LONG" else "SELL" if side_u == "SHORT" else ""
         s["sl"] = s.get("slf")
         s["timeframe"] = s.get("tf")
+        s["client"] = normalize_client_id(s.get("client"))
 
         payload.update(s)
         payload["signal"] = s
 
-        if BOT_AUTO_ACK_ON_GET and client_id:
-            try:
-                sid = str(s.get("id", "")).strip()
-                if sid:
-                    remember_client_ack(client_id, sid)
-            except Exception:
-                pass
+        if BOT_AUTO_ACK_ON_GET:
+            sid = str(s.get("id", "")).strip()
+            if sid:
+                remember_client_ack(client_id, sid)
 
     return jsonify(payload), 200
 
@@ -1014,7 +1143,7 @@ def bot_ack():
     if not require_secret(data, "bot"):
         return "❌ Unauthorized", 401
 
-    client_id = str(data.get("client", "")).strip()
+    client_id = normalize_client_id(data.get("client", ""))
     sig_id = str(data.get("id", "")).strip()
 
     if not client_id or not sig_id:
@@ -1039,6 +1168,10 @@ def bot_webhook():
         if not require_secret(data, "bot"):
             return "❌ Unauthorized", 401
 
+        route = str(data.get("route", "")).strip().lower()
+        if route and route != "bot":
+            return "✅ Ignored (route)", 200
+
         st = load_bot_state()
         if not st.get("enabled", True):
             return "✅ Bot disabled (ignored)", 200
@@ -1050,12 +1183,17 @@ def bot_webhook():
         symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
         side = normalize_side(data.get("side") or data.get("direction"))
         entry = parse_entry(data)
-        tf = str(data.get("tf") or data.get("timeframe") or "").strip()
+        tf = normalize_tf(data.get("tf") or data.get("timeframe") or "")
         tv_time = str(data.get("time") or "").strip()
         slf = parse_float(data.get("slf"))
+        client_id = normalize_client_id(data.get("client") or "")
+        explicit_id = str(data.get("id") or "").strip()
 
         if not symbol or side not in {"long", "short"} or entry <= 0:
             return "❌ Ungültige Daten (symbol/side/entry)", 400
+
+        if BOT_REQUIRE_TIME and not parse_iso_utc(tv_time):
+            return "❌ time fehlt/ungueltig", 400
 
         ok, why, sig_id = save_bot_signal(
             symbol=symbol,
@@ -1065,12 +1203,17 @@ def bot_webhook():
             slf=slf,
             tv_time=tv_time,
             raw=data,
+            client_id=client_id,
+            sig_id=explicit_id,
         )
 
         if why == "duplicate":
             return "✅ Duplicate ignored", 200
 
-        return jsonify({"ok": True, "saved": ok, "id": sig_id}), 200
+        if why == "missing_time":
+            return "❌ time fehlt/ungueltig", 400
+
+        return jsonify({"ok": True, "saved": ok, "id": sig_id, "client": client_id}), 200
 
     except Exception as e:
         print("❌ BOT Fehler:", str(e), flush=True)
