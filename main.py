@@ -981,26 +981,104 @@ def webhook():
         if route and route != "telegram":
             return "✅ Ignored (route)", 200
 
-        cmd = (data.get("cmd") or "").strip().upper()
-        if cmd and cmd != "ENTRY":
-            return "✅ Ignored (cmd)", 200
+        cmd = (data.get("cmd") or "ENTRY").strip().upper()
 
         symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
         side = normalize_side(data.get("side") or data.get("direction"))
+
+        # ============================================================
+        # DIREKTE TELEGRAM EVENTS VON TRADINGVIEW
+        #
+        # TradingView TP1  -> Telegram TP1
+        # TradingView TP3  -> Telegram TP2
+        # TradingView TP5  -> Telegram Full TP
+        # TradingView SL Fishing -> Telegram SL
+        #
+        # Wichtig:
+        # Hier wird KEIN Preis mehr extern abgefragt.
+        # TradingView meldet den Treffer direkt.
+        # ============================================================
+        if cmd in {"TP1", "TP3", "TP5", "FULLTP", "SL", "BE"}:
+            if not symbol or side not in {"long", "short"}:
+                return "❌ Ungültige Event-Daten (symbol/side)", 400
+
+            price = (
+                parse_float(data.get("price"))
+                or parse_float(data.get("close"))
+                or parse_float(data.get("level"))
+                or parse_float(data.get("entry"))
+            )
+
+            price_line = f"\nPreis: `{fmt_price(symbol, price)}`" if price else ""
+
+            event_texts = {
+                "TP1": "💶 *TP1 erreicht – Breakeven setzen oder Trade managen!* 🚀",
+                "TP3": "💶 *TP2 erreicht – weiterer Teilgewinn erreicht!* ✨",
+                "TP5": "🏆 *Full TP erreicht – Glückwunsch an alle!* 💰🥳",
+                "FULLTP": "🏆 *Full TP erreicht – Glückwunsch an alle!* 💰🥳",
+                "SL": "🛑 *SL/Fishing-SL erreicht – Trade beendet.*",
+                "BE": "💰 *Breakeven erreicht – Rest auf Entry beendet.*",
+            }
+
+            msg = f"*{symbol}* | *{side.upper()}*\n{event_texts[cmd]}{price_line}"
+            send_telegram(msg, retries=1)
+
+            return "✅ Event OK", 200
+
+        # ============================================================
+        # ENTRY SIGNAL FÜR TELEGRAM
+        #
+        # Telegram TP1     = TradingView TP1
+        # Telegram TP2     = TradingView TP3
+        # Telegram Full TP = TradingView TP5
+        # Telegram SL      = TradingView SL Fishing
+        # ============================================================
+        if cmd != "ENTRY":
+            return "✅ Ignored (cmd)", 200
+
         entry = parse_entry(data)
 
         if not symbol or side not in {"long", "short"} or entry <= 0:
             return "❌ Ungültige Daten (symbol/side/entry)", 400
 
-        sl = calc_sl(entry, side)
-        tp1, tp2, tp3 = calc_tp(entry, sl, side, symbol)
+        # Fallback: alte Berechnung bleibt als Sicherheit,
+        # falls TradingView einmal keine TP/SL Werte mitsendet.
+        auto_sl = calc_sl(entry, side)
+        auto_tp1, auto_tp2, auto_tp3 = calc_tp(entry, auto_sl, side, symbol)
+
+        sl = (
+            parse_float(data.get("sl_fishing"))
+            or parse_float(data.get("slFishing"))
+            or parse_float(data.get("sl_fish"))
+            or parse_float(data.get("sl"))
+            or auto_sl
+        )
+
+        tp1 = (
+            parse_float(data.get("tp1"))
+            or auto_tp1
+        )
+
+        tp2 = (
+            parse_float(data.get("tp3"))
+            or parse_float(data.get("tp2"))
+            or auto_tp2
+        )
+
+        tp3 = (
+            parse_float(data.get("tp5"))
+            or parse_float(data.get("fulltp"))
+            or parse_float(data.get("full_tp"))
+            or auto_tp3
+        )
 
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
         send_telegram(msg, retries=1)
 
-        meta = {"tf": data.get("tf"), "time": data.get("time"), "raw": {"cmd": cmd}}
-        save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta=meta)
-
+        # WICHTIG:
+        # Kein save_trade() mehr.
+        # Sonst würde der alte Monitor den Trade wieder selbst überwachen
+        # und könnte erneut falsche TP/SL Meldungen schicken.
         return "✅ OK", 200
 
     except Exception as e:
@@ -1016,13 +1094,34 @@ def add_manual():
             return "❌ Ungültiges JSON", 400
 
         symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
-        side = normalize_side(data.get("side"))
+        side = normalize_side(data.get("side") or data.get("direction"))
         entry = parse_float(data.get("entry")) or 0.0
 
-        sl = parse_float(data.get("sl")) or 0.0
+        sl = (
+            parse_float(data.get("sl_fishing"))
+            or parse_float(data.get("slFishing"))
+            or parse_float(data.get("sl"))
+            or 0.0
+        )
+
         tp1 = parse_float(data.get("tp1")) or 0.0
-        tp2 = parse_float(data.get("tp2")) or 0.0
-        tp3 = parse_float(data.get("tp3")) or 0.0
+
+        # Auch manuell gilt:
+        # TP2 im Telegram kann aus TP3 kommen.
+        tp2 = (
+            parse_float(data.get("tp3"))
+            or parse_float(data.get("tp2"))
+            or 0.0
+        )
+
+        # Full TP im Telegram kann aus TP5 kommen.
+        tp3 = (
+            parse_float(data.get("tp5"))
+            or parse_float(data.get("fulltp"))
+            or parse_float(data.get("full_tp"))
+            or parse_float(data.get("tp3"))
+            or 0.0
+        )
 
         if not all([symbol, entry, side, sl, tp1, tp2, tp3]) or side not in {"long", "short"}:
             return "❌ Ungültige Daten", 400
@@ -1030,8 +1129,8 @@ def add_manual():
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
         send_telegram(msg, retries=1)
 
-        save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta={"manual": True})
-        return "✅ Manuell hinzugefügt", 200
+        # Kein save_trade() mehr, damit keine externe Preisüberwachung startet.
+        return "✅ Manuell an Telegram gesendet", 200
 
     except Exception as e:
         log_error(f"Fehler beim manuellen Import: {e}")
