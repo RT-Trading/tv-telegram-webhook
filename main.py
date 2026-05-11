@@ -987,18 +987,28 @@ def webhook():
         side = normalize_side(data.get("side") or data.get("direction"))
 
         # ============================================================
+        # ALTES TP5 IGNORIEREN
+        #
+        # Ab jetzt gilt:
+        # TradingView TP4 = Telegram Full TP
+        # ============================================================
+        if cmd == "TP5":
+            print("⚠️ Alter TP5-Telegram-Event ignoriert. Full TP ist jetzt TP4.", flush=True)
+            return "✅ Ignored old TP5 (use TP4)", 200
+
+        # ============================================================
         # DIREKTE TELEGRAM EVENTS VON TRADINGVIEW
         #
-        # TradingView TP1  -> Telegram TP1
-        # TradingView TP3  -> Telegram TP2
-        # TradingView TP5  -> Telegram Full TP
+        # TradingView TP1        -> Telegram TP1
+        # TradingView TP3        -> Telegram TP2
+        # TradingView TP4        -> Telegram Full TP
         # TradingView SL Fishing -> Telegram SL
         #
         # Wichtig:
-        # Hier wird KEIN Preis mehr extern abgefragt.
+        # Hier wird KEIN Preis extern abgefragt.
         # TradingView meldet den Treffer direkt.
         # ============================================================
-        if cmd in {"TP1", "TP3", "TP5", "FULLTP", "SL", "BE"}:
+        if cmd in {"TP1", "TP3", "TP4", "FULLTP", "SL", "BE"}:
             if not symbol or side not in {"long", "short"}:
                 return "❌ Ungültige Event-Daten (symbol/side)", 400
 
@@ -1011,16 +1021,17 @@ def webhook():
 
             price_line = f"\nPreis: `{fmt_price(symbol, price)}`" if price else ""
 
+            event_key = "TP4" if cmd == "FULLTP" else cmd
+
             event_texts = {
                 "TP1": "💶 *TP1 erreicht – Breakeven setzen oder Trade managen!* 🚀",
                 "TP3": "💶 *TP2 erreicht – weiterer Teilgewinn erreicht!* ✨",
-                "TP5": "🏆 *Full TP erreicht – Glückwunsch an alle!* 💰🥳",
-                "FULLTP": "🏆 *Full TP erreicht – Glückwunsch an alle!* 💰🥳",
+                "TP4": "🏆 *Full TP erreicht – Glückwunsch an alle!* 💰🥳",
                 "SL": "🛑 *SL/Fishing-SL erreicht – Trade beendet.*",
                 "BE": "💰 *Breakeven erreicht – Rest auf Entry beendet.*",
             }
 
-            msg = f"*{symbol}* | *{side.upper()}*\n{event_texts[cmd]}{price_line}"
+            msg = f"*{symbol}* | *{side.upper()}*\n{event_texts[event_key]}{price_line}"
             send_telegram(msg, retries=1)
 
             return "✅ Event OK", 200
@@ -1028,10 +1039,13 @@ def webhook():
         # ============================================================
         # ENTRY SIGNAL FÜR TELEGRAM
         #
+        # Telegram SL      = TradingView SLF
         # Telegram TP1     = TradingView TP1
         # Telegram TP2     = TradingView TP3
-        # Telegram Full TP = TradingView TP5
-        # Telegram SL      = TradingView SL Fishing
+        # Telegram Full TP = TradingView TP4
+        #
+        # KEINE automatische Berechnung mehr.
+        # Wenn TradingView Werte fehlen, wird NICHT gesendet.
         # ============================================================
         if cmd != "ENTRY":
             return "✅ Ignored (cmd)", 200
@@ -1041,45 +1055,53 @@ def webhook():
         if not symbol or side not in {"long", "short"} or entry <= 0:
             return "❌ Ungültige Daten (symbol/side/entry)", 400
 
-        # Fallback: alte Berechnung bleibt als Sicherheit,
-        # falls TradingView einmal keine TP/SL Werte mitsendet.
-        auto_sl = calc_sl(entry, side)
-        auto_tp1, auto_tp2, auto_tp3 = calc_tp(entry, auto_sl, side, symbol)
-
-        sl = (
+        tv_sl = (
             parse_float(data.get("sl_fishing"))
             or parse_float(data.get("slFishing"))
             or parse_float(data.get("sl_fish"))
-            or parse_float(data.get("sl"))
-            or auto_sl
+            or parse_float(data.get("slf"))
+            or 0.0
         )
 
-        tp1 = (
-            parse_float(data.get("tp1"))
-            or auto_tp1
-        )
+        tv_tp1 = parse_float(data.get("tp1")) or 0.0
 
-        tp2 = (
-            parse_float(data.get("tp3"))
-            or parse_float(data.get("tp2"))
-            or auto_tp2
-        )
+        # Telegram TP2 = TradingView TP3
+        tv_tp3 = parse_float(data.get("tp3")) or 0.0
 
-        tp3 = (
-            parse_float(data.get("tp5"))
+        # Telegram Full TP = TradingView TP4
+        tv_tp4 = (
+            parse_float(data.get("tp4"))
             or parse_float(data.get("fulltp"))
             or parse_float(data.get("full_tp"))
-            or auto_tp3
+            or 0.0
         )
 
-        msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
+        if not all([tv_sl, tv_tp1, tv_tp3, tv_tp4]):
+            print("❌ TradingView ENTRY ohne vollständige Levels:", data, flush=True)
+            return "❌ TP1/TP3/TP4/SLF fehlen im TradingView Entry Alert", 400
+
+        msg = format_message(
+            symbol=symbol,
+            entry=entry,
+            sl=tv_sl,
+            tp1=tv_tp1,
+            tp2=tv_tp3,
+            tp3=tv_tp4,
+            side=side
+        )
+
         send_telegram(msg, retries=1)
 
-        # WICHTIG:
-        # Kein save_trade() mehr.
-        # Sonst würde der alte Monitor den Trade wieder selbst überwachen
-        # und könnte erneut falsche TP/SL Meldungen schicken.
-        return "✅ OK", 200
+        print(
+            f"✅ ENTRY aus TradingView Levels gesendet: "
+            f"{symbol} {side} entry={entry} slf={tv_sl} "
+            f"tp1={tv_tp1} tp3={tv_tp3} tp4={tv_tp4}",
+            flush=True
+        )
+
+        # Kein save_trade().
+        # Der alte Monitor soll keine eigenen TP/SL Berechnungen mehr machen.
+        return "✅ ENTRY OK", 200
 
     except Exception as e:
         print("❌ VIP Fehler:", str(e), flush=True)
@@ -1100,26 +1122,27 @@ def add_manual():
         sl = (
             parse_float(data.get("sl_fishing"))
             or parse_float(data.get("slFishing"))
+            or parse_float(data.get("sl_fish"))
+            or parse_float(data.get("slf"))
             or parse_float(data.get("sl"))
             or 0.0
         )
 
+        # Telegram TP1 = TradingView TP1
         tp1 = parse_float(data.get("tp1")) or 0.0
 
-        # Auch manuell gilt:
-        # TP2 im Telegram kann aus TP3 kommen.
+        # Telegram TP2 = TradingView TP3
         tp2 = (
             parse_float(data.get("tp3"))
             or parse_float(data.get("tp2"))
             or 0.0
         )
 
-        # Full TP im Telegram kann aus TP5 kommen.
+        # Telegram Full TP = TradingView TP4
         tp3 = (
-            parse_float(data.get("tp5"))
+            parse_float(data.get("tp4"))
             or parse_float(data.get("fulltp"))
             or parse_float(data.get("full_tp"))
-            or parse_float(data.get("tp3"))
             or 0.0
         )
 
@@ -1129,13 +1152,12 @@ def add_manual():
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
         send_telegram(msg, retries=1)
 
-        # Kein save_trade() mehr, damit keine externe Preisüberwachung startet.
+        # Kein save_trade(), damit keine externe Preisüberwachung startet.
         return "✅ Manuell an Telegram gesendet", 200
 
     except Exception as e:
         log_error(f"Fehler beim manuellen Import: {e}")
         return f"❌ Fehler: {e}", 500
-
 
 # ---------------------------------------------------------------------
 # BOT: Status / Toggle
