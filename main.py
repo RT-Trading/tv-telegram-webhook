@@ -925,7 +925,66 @@ def next_signal_for_client(client_id: str):
         remember_client_ack(client_id, last_id)
     return None
 
+def process_bot_payload(data: dict):
+    try:
+        print("🤖 BOT Webhook empfangen:", data, flush=True)
 
+        if not isinstance(data, dict):
+            return "❌ Ungültiges JSON", 400
+
+        if not require_secret(data, "bot"):
+            return "❌ Unauthorized", 401
+
+        route = str(data.get("route", "")).strip().lower()
+        if route and route != "bot":
+            return "✅ Ignored (route)", 200
+
+        st = load_bot_state()
+        if not st.get("enabled", True):
+            return "✅ Bot disabled (ignored)", 200
+
+        cmd = (data.get("cmd") or "").strip().upper()
+        if cmd and cmd != "ENTRY":
+            return "✅ Ignored (cmd)", 200
+
+        symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
+        side = normalize_side(data.get("side") or data.get("direction"))
+        entry = parse_entry(data)
+        tf = normalize_tf(data.get("tf") or data.get("timeframe") or "")
+        tv_time = str(data.get("time") or "").strip()
+        slf = parse_float(data.get("slf"))
+        client_id = normalize_client_id(data.get("client") or "")
+        explicit_id = str(data.get("id") or "").strip()
+
+        if not symbol or side not in {"long", "short"} or entry <= 0:
+            return "❌ Ungültige Daten (symbol/side/entry)", 400
+
+        if BOT_REQUIRE_TIME and not parse_iso_utc(tv_time):
+            return "❌ time fehlt/ungueltig", 400
+
+        ok, why, sig_id = save_bot_signal(
+            symbol=symbol,
+            side=side,
+            entry=entry,
+            tf=tf,
+            slf=slf,
+            tv_time=tv_time,
+            raw=data,
+            client_id=client_id,
+            sig_id=explicit_id,
+        )
+
+        if why == "duplicate":
+            return "✅ Duplicate ignored", 200
+
+        if why == "missing_time":
+            return "❌ time fehlt/ungueltig", 400
+
+        return jsonify({"ok": True, "saved": ok, "id": sig_id, "client": client_id}), 200
+
+    except Exception as e:
+        print("❌ BOT Fehler:", str(e), flush=True)
+        return f"❌ Fehler: {str(e)}", 400
 # =============================================================================
 # ROUTES
 # =============================================================================
@@ -969,17 +1028,24 @@ def monitor_status():
 def webhook():
     try:
         data = request.get_json(force=True, silent=True) or {}
-        print("📬 VIP Webhook empfangen:", data, flush=True)
+        print("📬 Webhook empfangen:", data, flush=True)
 
         if not isinstance(data, dict):
             return "❌ Ungültiges JSON", 400
 
-        if not require_secret(data, "vip"):
-            return "❌ Unauthorized", 401
-
         route = str(data.get("route", "")).strip().lower()
+
+        # Wichtig:
+        # /webhook nimmt jetzt auch cTrader Bot Signale an.
+        if route == "bot":
+            return process_bot_payload(data)
+
+        # Alles andere bleibt Telegram/VIP
         if route and route != "telegram":
             return "✅ Ignored (route)", 200
+
+        if not require_secret(data, "vip"):
+            return "❌ Unauthorized", 401
 
         cmd = (data.get("cmd") or "ENTRY").strip().upper()
 
@@ -1273,72 +1339,13 @@ def bot_ack():
     remember_client_ack(client_id, sig_id)
     return jsonify({"ok": True, "client": client_id, "acked": sig_id}), 200
 
-
 # ---------------------------------------------------------------------
 # BOT: /bot_webhook
 # ---------------------------------------------------------------------
 @app.route("/bot_webhook", methods=["POST"])
 def bot_webhook():
-    try:
-        data = request.get_json(force=True, silent=True) or {}
-        print("🤖 BOT Webhook empfangen:", data, flush=True)
-
-        if not isinstance(data, dict):
-            return "❌ Ungültiges JSON", 400
-
-        if not require_secret(data, "bot"):
-            return "❌ Unauthorized", 401
-
-        route = str(data.get("route", "")).strip().lower()
-        if route and route != "bot":
-            return "✅ Ignored (route)", 200
-
-        st = load_bot_state()
-        if not st.get("enabled", True):
-            return "✅ Bot disabled (ignored)", 200
-
-        cmd = (data.get("cmd") or "").strip().upper()
-        if cmd and cmd != "ENTRY":
-            return "✅ Ignored (cmd)", 200
-
-        symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
-        side = normalize_side(data.get("side") or data.get("direction"))
-        entry = parse_entry(data)
-        tf = normalize_tf(data.get("tf") or data.get("timeframe") or "")
-        tv_time = str(data.get("time") or "").strip()
-        slf = parse_float(data.get("slf"))
-        client_id = normalize_client_id(data.get("client") or "")
-        explicit_id = str(data.get("id") or "").strip()
-
-        if not symbol or side not in {"long", "short"} or entry <= 0:
-            return "❌ Ungültige Daten (symbol/side/entry)", 400
-
-        if BOT_REQUIRE_TIME and not parse_iso_utc(tv_time):
-            return "❌ time fehlt/ungueltig", 400
-
-        ok, why, sig_id = save_bot_signal(
-            symbol=symbol,
-            side=side,
-            entry=entry,
-            tf=tf,
-            slf=slf,
-            tv_time=tv_time,
-            raw=data,
-            client_id=client_id,
-            sig_id=explicit_id,
-        )
-
-        if why == "duplicate":
-            return "✅ Duplicate ignored", 200
-
-        if why == "missing_time":
-            return "❌ time fehlt/ungueltig", 400
-
-        return jsonify({"ok": True, "saved": ok, "id": sig_id, "client": client_id}), 200
-
-    except Exception as e:
-        print("❌ BOT Fehler:", str(e), flush=True)
-        return f"❌ Fehler: {str(e)}", 400
+    data = request.get_json(force=True, silent=True) or {}
+    return process_bot_payload(data)
 
 
 # =============================================================================
