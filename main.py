@@ -925,66 +925,7 @@ def next_signal_for_client(client_id: str):
         remember_client_ack(client_id, last_id)
     return None
 
-def process_bot_payload(data: dict):
-    try:
-        print("🤖 BOT Webhook empfangen:", data, flush=True)
 
-        if not isinstance(data, dict):
-            return "❌ Ungültiges JSON", 400
-
-        if not require_secret(data, "bot"):
-            return "❌ Unauthorized", 401
-
-        route = str(data.get("route", "")).strip().lower()
-        if route and route != "bot":
-            return "✅ Ignored (route)", 200
-
-        st = load_bot_state()
-        if not st.get("enabled", True):
-            return "✅ Bot disabled (ignored)", 200
-
-        cmd = (data.get("cmd") or "").strip().upper()
-        if cmd and cmd != "ENTRY":
-            return "✅ Ignored (cmd)", 200
-
-        symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
-        side = normalize_side(data.get("side") or data.get("direction"))
-        entry = parse_entry(data)
-        tf = normalize_tf(data.get("tf") or data.get("timeframe") or "")
-        tv_time = str(data.get("time") or "").strip()
-        slf = parse_float(data.get("slf"))
-        client_id = normalize_client_id(data.get("client") or "")
-        explicit_id = str(data.get("id") or "").strip()
-
-        if not symbol or side not in {"long", "short"} or entry <= 0:
-            return "❌ Ungültige Daten (symbol/side/entry)", 400
-
-        if BOT_REQUIRE_TIME and not parse_iso_utc(tv_time):
-            return "❌ time fehlt/ungueltig", 400
-
-        ok, why, sig_id = save_bot_signal(
-            symbol=symbol,
-            side=side,
-            entry=entry,
-            tf=tf,
-            slf=slf,
-            tv_time=tv_time,
-            raw=data,
-            client_id=client_id,
-            sig_id=explicit_id,
-        )
-
-        if why == "duplicate":
-            return "✅ Duplicate ignored", 200
-
-        if why == "missing_time":
-            return "❌ time fehlt/ungueltig", 400
-
-        return jsonify({"ok": True, "saved": ok, "id": sig_id, "client": client_id}), 200
-
-    except Exception as e:
-        print("❌ BOT Fehler:", str(e), flush=True)
-        return f"❌ Fehler: {str(e)}", 400
 # =============================================================================
 # ROUTES
 # =============================================================================
@@ -1028,53 +969,36 @@ def monitor_status():
 def webhook():
     try:
         data = request.get_json(force=True, silent=True) or {}
-        print("📬 Webhook empfangen:", data, flush=True)
+        print("📬 TG Webhook empfangen:", data, flush=True)
 
         if not isinstance(data, dict):
             return "❌ Ungültiges JSON", 400
 
-        route = str(data.get("route", "")).strip().lower()
-
-        # Wichtig:
-        # /webhook nimmt jetzt auch cTrader Bot Signale an.
-        if route == "bot":
-            return process_bot_payload(data)
-
-        # Alles andere bleibt Telegram/VIP
-        if route and route != "telegram":
-            return "✅ Ignored (route)", 200
-
         if not require_secret(data, "vip"):
             return "❌ Unauthorized", 401
+
+        route = str(data.get("route", "")).strip().lower()
+        if route and route != "telegram":
+            return "✅ Ignored (route)", 200
 
         cmd = (data.get("cmd") or "ENTRY").strip().upper()
 
         symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
         side = normalize_side(data.get("side") or data.get("direction"))
 
-        # ============================================================
-        # ALTES TP5 IGNORIEREN
-        #
-        # Ab jetzt gilt:
-        # TradingView TP4 = Telegram Full TP
-        # ============================================================
-        if cmd == "TP5":
-            print("⚠️ Alter TP5-Telegram-Event ignoriert. Full TP ist jetzt TP4.", flush=True)
-            return "✅ Ignored old TP5 (use TP4)", 200
+        # SLF akzeptieren wir auch als SL
+        if cmd == "SLF":
+            cmd = "SL"
 
         # ============================================================
         # DIREKTE TELEGRAM EVENTS VON TRADINGVIEW
         #
-        # TradingView TP1        -> Telegram TP1
-        # TradingView TP3        -> Telegram TP2
-        # TradingView TP4        -> Telegram Full TP
-        # TradingView SL Fishing -> Telegram SL
-        #
-        # Wichtig:
-        # Hier wird KEIN Preis extern abgefragt.
-        # TradingView meldet den Treffer direkt.
+        # TV TP1  -> Telegram TP1
+        # TV TP3  -> Telegram TP2
+        # TV TP5  -> Telegram Full TP
+        # TV SLF  -> Telegram SL
         # ============================================================
-        if cmd in {"TP1", "TP3", "TP4", "FULLTP", "SL", "BE"}:
+        if cmd in {"TP1", "TP3", "TP5", "FULLTP", "SL", "BE"}:
             if not symbol or side not in {"long", "short"}:
                 return "❌ Ungültige Event-Daten (symbol/side)", 400
 
@@ -1087,14 +1011,14 @@ def webhook():
 
             price_line = f"\nPreis: `{fmt_price(symbol, price)}`" if price else ""
 
-            event_key = "TP4" if cmd == "FULLTP" else cmd
+            event_key = "TP5" if cmd == "FULLTP" else cmd
 
             event_texts = {
                 "TP1": "💶 *TP1 erreicht – Breakeven setzen oder Trade managen!* 🚀",
                 "TP3": "💶 *TP2 erreicht – weiterer Teilgewinn erreicht!* ✨",
-                "TP4": "🏆 *Full TP erreicht – Glückwunsch an alle!* 💰🥳",
-                "SL": "🛑 *SL/Fishing-SL erreicht – Trade beendet.*",
-                "BE": "💰 *Breakeven erreicht – Rest auf Entry beendet.*",
+                "TP5": "🏆 *Full TP erreicht – Glückwunsch an alle!* 💰🥳",
+                "SL":  "🛑 *SL/Fishing-SL erreicht – Trade beendet.*",
+                "BE":  "💰 *Breakeven erreicht – Rest auf Entry beendet.*",
             }
 
             msg = f"*{symbol}* | *{side.upper()}*\n{event_texts[event_key]}{price_line}"
@@ -1105,13 +1029,10 @@ def webhook():
         # ============================================================
         # ENTRY SIGNAL FÜR TELEGRAM
         #
-        # Telegram SL      = TradingView SLF
-        # Telegram TP1     = TradingView TP1
-        # Telegram TP2     = TradingView TP3
-        # Telegram Full TP = TradingView TP4
-        #
-        # KEINE automatische Berechnung mehr.
-        # Wenn TradingView Werte fehlen, wird NICHT gesendet.
+        # Telegram SL      = TV SLF
+        # Telegram TP1     = TV TP1
+        # Telegram TP2     = TV TP3
+        # Telegram Full TP = TV TP5
         # ============================================================
         if cmd != "ENTRY":
             return "✅ Ignored (cmd)", 200
@@ -1126,25 +1047,30 @@ def webhook():
             or parse_float(data.get("slFishing"))
             or parse_float(data.get("sl_fish"))
             or parse_float(data.get("slf"))
+            or parse_float(data.get("sl"))
             or 0.0
         )
 
         tv_tp1 = parse_float(data.get("tp1")) or 0.0
 
         # Telegram TP2 = TradingView TP3
-        tv_tp3 = parse_float(data.get("tp3")) or 0.0
+        tv_tp3 = (
+            parse_float(data.get("tp3"))
+            or parse_float(data.get("tp2"))
+            or 0.0
+        )
 
-        # Telegram Full TP = TradingView TP4
-        tv_tp4 = (
-            parse_float(data.get("tp4"))
+        # Telegram Full TP = TradingView TP5
+        tv_tp5 = (
+            parse_float(data.get("tp5"))
             or parse_float(data.get("fulltp"))
             or parse_float(data.get("full_tp"))
             or 0.0
         )
 
-        if not all([tv_sl, tv_tp1, tv_tp3, tv_tp4]):
+        if not all([tv_sl, tv_tp1, tv_tp3, tv_tp5]):
             print("❌ TradingView ENTRY ohne vollständige Levels:", data, flush=True)
-            return "❌ TP1/TP3/TP4/SLF fehlen im TradingView Entry Alert", 400
+            return "❌ TP1/TP3/TP5/SLF fehlen im TradingView Entry Alert", 400
 
         msg = format_message(
             symbol=symbol,
@@ -1152,7 +1078,7 @@ def webhook():
             sl=tv_sl,
             tp1=tv_tp1,
             tp2=tv_tp3,
-            tp3=tv_tp4,
+            tp3=tv_tp5,
             side=side
         )
 
@@ -1161,16 +1087,17 @@ def webhook():
         print(
             f"✅ ENTRY aus TradingView Levels gesendet: "
             f"{symbol} {side} entry={entry} slf={tv_sl} "
-            f"tp1={tv_tp1} tp3={tv_tp3} tp4={tv_tp4}",
+            f"tp1={tv_tp1} tp3={tv_tp3} tp5={tv_tp5}",
             flush=True
         )
 
-        # Kein save_trade().
-        # Der alte Monitor soll keine eigenen TP/SL Berechnungen mehr machen.
+        # Wichtig: Kein save_trade()
+        # Wir wollen kein externes Monitoring mehr.
+        # TradingView sendet Entry, TP und SL selbst.
         return "✅ ENTRY OK", 200
 
     except Exception as e:
-        print("❌ VIP Fehler:", str(e), flush=True)
+        print("❌ TG Fehler:", str(e), flush=True)
         return f"❌ Fehler: {str(e)}", 400
 
 
@@ -1182,35 +1109,13 @@ def add_manual():
             return "❌ Ungültiges JSON", 400
 
         symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
-        side = normalize_side(data.get("side") or data.get("direction"))
+        side = normalize_side(data.get("side"))
         entry = parse_float(data.get("entry")) or 0.0
 
-        sl = (
-            parse_float(data.get("sl_fishing"))
-            or parse_float(data.get("slFishing"))
-            or parse_float(data.get("sl_fish"))
-            or parse_float(data.get("slf"))
-            or parse_float(data.get("sl"))
-            or 0.0
-        )
-
-        # Telegram TP1 = TradingView TP1
+        sl = parse_float(data.get("sl")) or 0.0
         tp1 = parse_float(data.get("tp1")) or 0.0
-
-        # Telegram TP2 = TradingView TP3
-        tp2 = (
-            parse_float(data.get("tp3"))
-            or parse_float(data.get("tp2"))
-            or 0.0
-        )
-
-        # Telegram Full TP = TradingView TP4
-        tp3 = (
-            parse_float(data.get("tp4"))
-            or parse_float(data.get("fulltp"))
-            or parse_float(data.get("full_tp"))
-            or 0.0
-        )
+        tp2 = parse_float(data.get("tp2")) or 0.0
+        tp3 = parse_float(data.get("tp3")) or 0.0
 
         if not all([symbol, entry, side, sl, tp1, tp2, tp3]) or side not in {"long", "short"}:
             return "❌ Ungültige Daten", 400
@@ -1218,12 +1123,13 @@ def add_manual():
         msg = format_message(symbol, entry, sl, tp1, tp2, tp3, side)
         send_telegram(msg, retries=1)
 
-        # Kein save_trade(), damit keine externe Preisüberwachung startet.
-        return "✅ Manuell an Telegram gesendet", 200
+        save_trade(symbol, entry, sl, tp1, tp2, tp3, side, meta={"manual": True})
+        return "✅ Manuell hinzugefügt", 200
 
     except Exception as e:
         log_error(f"Fehler beim manuellen Import: {e}")
         return f"❌ Fehler: {e}", 500
+
 
 # ---------------------------------------------------------------------
 # BOT: Status / Toggle
@@ -1339,13 +1245,72 @@ def bot_ack():
     remember_client_ack(client_id, sig_id)
     return jsonify({"ok": True, "client": client_id, "acked": sig_id}), 200
 
+
 # ---------------------------------------------------------------------
 # BOT: /bot_webhook
 # ---------------------------------------------------------------------
 @app.route("/bot_webhook", methods=["POST"])
 def bot_webhook():
-    data = request.get_json(force=True, silent=True) or {}
-    return process_bot_payload(data)
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        print("🤖 BOT Webhook empfangen:", data, flush=True)
+
+        if not isinstance(data, dict):
+            return "❌ Ungültiges JSON", 400
+
+        if not require_secret(data, "bot"):
+            return "❌ Unauthorized", 401
+
+        route = str(data.get("route", "")).strip().lower()
+        if route and route != "bot":
+            return "✅ Ignored (route)", 200
+
+        st = load_bot_state()
+        if not st.get("enabled", True):
+            return "✅ Bot disabled (ignored)", 200
+
+        cmd = (data.get("cmd") or "").strip().upper()
+        if cmd and cmd != "ENTRY":
+            return "✅ Ignored (cmd)", 200
+
+        symbol = normalize_symbol_tv(str(data.get("symbol", "")).strip())
+        side = normalize_side(data.get("side") or data.get("direction"))
+        entry = parse_entry(data)
+        tf = normalize_tf(data.get("tf") or data.get("timeframe") or "")
+        tv_time = str(data.get("time") or "").strip()
+        slf = parse_float(data.get("slf"))
+        client_id = normalize_client_id(data.get("client") or "")
+        explicit_id = str(data.get("id") or "").strip()
+
+        if not symbol or side not in {"long", "short"} or entry <= 0:
+            return "❌ Ungültige Daten (symbol/side/entry)", 400
+
+        if BOT_REQUIRE_TIME and not parse_iso_utc(tv_time):
+            return "❌ time fehlt/ungueltig", 400
+
+        ok, why, sig_id = save_bot_signal(
+            symbol=symbol,
+            side=side,
+            entry=entry,
+            tf=tf,
+            slf=slf,
+            tv_time=tv_time,
+            raw=data,
+            client_id=client_id,
+            sig_id=explicit_id,
+        )
+
+        if why == "duplicate":
+            return "✅ Duplicate ignored", 200
+
+        if why == "missing_time":
+            return "❌ time fehlt/ungueltig", 400
+
+        return jsonify({"ok": True, "saved": ok, "id": sig_id, "client": client_id}), 200
+
+    except Exception as e:
+        print("❌ BOT Fehler:", str(e), flush=True)
+        return f"❌ Fehler: {str(e)}", 400
 
 
 # =============================================================================
